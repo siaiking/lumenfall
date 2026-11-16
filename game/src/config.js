@@ -94,6 +94,44 @@ export const WAVE = {
   spawnIntervalMin: 0.35,
   clearHeal: 1,
   bossEvery: 5,
+  mutationEvery: 5, // every fifth wave carries a mutation rule (v6)
+};
+
+// Wave mutations (v6): every fifth wave — which is also a boss wave — the
+// arena twists one rule. They rotate accelerated -> elite -> meteor, so
+// each boss fight has its own flavour on top of the Gloomlord.
+export const MUTATION_ORDER = ['accelerated', 'elite', 'meteor'];
+export const MUTATIONS = {
+  accelerated: {
+    label: 'ACCELERATED WAVE',
+    desc: 'the Hollow move and arrive faster',
+    speedMult: 1.35,
+    spawnMult: 0.65,
+  },
+  elite: {
+    label: 'ELITE WAVE',
+    desc: 'elites among the Hollow — watch for gold',
+    eliteChance: 0.35,
+  },
+  meteor: {
+    label: 'METEOR SHOWER',
+    desc: 'rocks fall from the dark — mind the rings',
+    interval: 2.4, // seconds between meteors
+    warn: 0.9, // seconds of warning ring before impact
+    blast: 70, // impact radius
+    enemyDamage: 3, // the rocks are indiscriminate: they hurt the Hollow too
+    playerDamage: 1,
+  },
+};
+
+// Arena hazards (v6): from wave 2 the arena itself fights back. Drifting
+// boulders block shots and hurt on contact; danger zones bloom on the floor
+// and burn whatever stands in them. The Hollow drift through boulders —
+// they are ghosts — but the zones burn them too, so a careful Warden can
+// kite a crowd into the fire.
+export const HAZARDS = {
+  obstacle: { minWave: 2, count: 2, extraAtWave: 5, radius: 26, speed: 26, damage: 1 },
+  zone: { minWave: 2, firstAt: 6, interval: 8, warn: 1.2, active: 4, radius: 70, tick: 1, damage: 1, maxActive: 2 },
 };
 
 // Kills chained within this window raise the combo; the combo multiplies score.

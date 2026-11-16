@@ -2,9 +2,9 @@
 // particles, pickups, the combo, and the wave flow. It advances in fixed
 // 1/60 s steps and uses only its own seeded random source, so a screenshot
 // scene replays the same world from the same seed.
-import { BOSS, COMBO_MAX, COMBO_MILESTONES, COMBO_WINDOW, DAMAGE_NUMBERS, DRONE, ELITE, ENEMIES, FIELD, PLAYER, SLOWMO, STEP, STREAK_CALLOUT_TIME, STREAK_TITLES, WAVE, WEAPONS } from './config.js';
+import { BOSS, COMBO_MAX, COMBO_MILESTONES, COMBO_WINDOW, DAMAGE_NUMBERS, DRONE, ELITE, ENEMIES, FIELD, HAZARDS, MUTATIONS, PLAYER, SLOWMO, STEP, STREAK_CALLOUT_TIME, STREAK_TITLES, WAVE, WEAPONS } from './config.js';
 import { clamp, makeRandom, range } from './random.js';
-import { enemyStats, isBossWave, spawnInterval, spawnPoint, waveComposition } from './waves.js';
+import { eliteChance, enemyStats, isBossWave, mutationForWave, spawnInterval, spawnPoint, waveComposition } from './waves.js';
 import { applyUpgrade, synergyText, upgradeLevel } from './upgrades.js';
 
 export const EVENT_NONE = 0;
@@ -90,6 +90,14 @@ export function createWorld(seed, best = 0) {
     spawnQueue: [],
     spawnTimer: 0,
     waveCleared: false,
+    // Wave mutations and arena hazards (v6): the current mutation rule,
+    // the drifting boulders, the floor zones, and the falling meteors.
+    mutation: null,
+    obstacles: [],
+    zones: [],
+    meteors: [],
+    meteorTimer: 0,
+    zoneTimer: 0,
     shake: 0,
     hitStop: 0,
     flash: 0,
@@ -150,15 +158,53 @@ export function startWave(world) {
   world.spawnQueue = waveComposition(world.wave, world.random);
   world.spawnTimer = 0.6;
   world.waveCleared = false;
+  // The mutation rule (v6): every fifth wave twists one rule, and the
+  // banner says so outright — the player always knows what changed.
+  world.mutation = mutationForWave(world.wave);
+  const mutation = world.mutation ? MUTATIONS[world.mutation] : null;
   world.banner = {
     text: isBossWave(world.wave) ? `WAVE ${world.wave} — THE GLOOMLORD` : `WAVE ${world.wave}`,
-    sub: isBossWave(world.wave) ? 'Something vast stirs in the dark' : `${world.spawnQueue.length} of the Hollow approach`,
+    sub: mutation
+      ? `MUTATION: ${mutation.label} — ${mutation.desc}`
+      : isBossWave(world.wave)
+        ? 'Something vast stirs in the dark'
+        : `${world.spawnQueue.length} of the Hollow approach`,
     timer: 2.2,
   };
   // The Gloomlord does not arrive quietly: a warning shake and a red edge.
   if (isBossWave(world.wave)) {
     world.bossWarn = 2.2;
     world.shake = Math.max(world.shake, 12);
+  }
+  // Arena hazards (v6): the boulders arrive from wave 2 (a third joins at
+  // wave 5), and the first meteor of a meteor shower is already on its way.
+  ensureObstacles(world);
+  if (world.mutation === 'meteor') world.meteorTimer = 1.5;
+  if (world.wave >= HAZARDS.zone.minWave && world.zoneTimer <= 0) world.zoneTimer = HAZARDS.zone.firstAt;
+}
+
+/**
+ * Keeps the arena's boulder count at the wave's target: two from wave 2,
+ * a third from wave 5. A new boulder drifts in from a random edge point,
+ * clear of the Warden's spawn.
+ */
+function ensureObstacles(world) {
+  const target = world.wave >= HAZARDS.obstacle.extraAtWave
+    ? HAZARDS.obstacle.count + 1
+    : world.wave >= HAZARDS.obstacle.minWave
+      ? HAZARDS.obstacle.count
+      : 0;
+  while (world.obstacles.length < target) {
+    const point = spawnPoint(world.random, world.player);
+    const angle = world.random() * Math.PI * 2;
+    world.obstacles.push({
+      x: point.x,
+      y: point.y,
+      vx: Math.cos(angle) * HAZARDS.obstacle.speed,
+      vy: Math.sin(angle) * HAZARDS.obstacle.speed,
+      radius: HAZARDS.obstacle.radius,
+      wobble: world.random() * Math.PI * 2,
+    });
   }
 }
 
@@ -213,8 +259,9 @@ function pushRing(world, x, y, maxRadius, color, life = 0.45) {
 }
 
 function spawnEnemy(world, kind, x, y, allowElite = true, summoned = false) {
-  const stats = enemyStats(kind, world.wave);
-  const elite = allowElite && kind !== 'boss' && world.wave >= ELITE.minWave && world.random() < ELITE.chance;
+  const stats = enemyStats(kind, world.wave, world.mutation);
+  const elite = allowElite && kind !== 'boss' && world.wave >= ELITE.minWave
+    && world.random() < eliteChance(world.wave, world.mutation);
   const enemy = {
     kind,
     x,
@@ -916,6 +963,16 @@ function updateBullets(world, dt, audio) {
     bullet.trail.push({ x: bullet.x, y: bullet.y });
     if (bullet.trail.length > 6) bullet.trail.shift();
     let dead = bullet.life <= 0 || bullet.x < -20 || bullet.x > FIELD.width + 20 || bullet.y < -20 || bullet.y > FIELD.height + 20;
+    // A drifting boulder (v6) swallows the shot: a grey spark, no damage.
+    if (!dead) {
+      for (const obstacle of world.obstacles) {
+        if (Math.hypot(obstacle.x - bullet.x, obstacle.y - bullet.y) < obstacle.radius + bullet.radius) {
+          burstParticles(world, bullet.x, bullet.y, '#8b93b8', 3, 120, 0.25, 2);
+          dead = true;
+          break;
+        }
+      }
+    }
     if (!dead) {
       for (let enemyIndex = world.enemies.length - 1; enemyIndex >= 0; enemyIndex -= 1) {
         const enemy = world.enemies[enemyIndex];
@@ -977,7 +1034,18 @@ function updateBullets(world, dt, audio) {
     const distance = Math.hypot(player.x - orb.x, player.y - orb.y);
     const hitPlayer = distance < player.radius + orb.radius;
     if (hitPlayer) damagePlayer(world, orb.damage, audio);
-    if (orb.life <= 0 || hitPlayer || orb.x < -20 || orb.x > FIELD.width + 20 || orb.y < -20 || orb.y > FIELD.height + 20) {
+    // A boulder (v6) swallows the orb too — cover works both ways.
+    let blocked = false;
+    if (!hitPlayer) {
+      for (const obstacle of world.obstacles) {
+        if (Math.hypot(obstacle.x - orb.x, obstacle.y - orb.y) < obstacle.radius + orb.radius) {
+          burstParticles(world, orb.x, orb.y, '#8b93b8', 3, 120, 0.25, 2);
+          blocked = true;
+          break;
+        }
+      }
+    }
+    if (orb.life <= 0 || hitPlayer || blocked || orb.x < -20 || orb.x > FIELD.width + 20 || orb.y < -20 || orb.y > FIELD.height + 20) {
       world.enemyBullets.splice(index, 1);
     }
   }
@@ -1027,6 +1095,147 @@ function updateMines(world, dt, audio) {
       }
     }
     world.mines.splice(index, 1);
+  }
+}
+
+/**
+ * The arena hazards (v6): drifting boulders, floor danger zones, and the
+ * meteor shower's falling rocks. Zones and meteors are the arena's own
+ * attacks — they hurt the Hollow too, so a careful Warden kites a crowd
+ * into the fire instead of only dodging it.
+ */
+function updateHazards(world, dt, audio) {
+  const player = world.player;
+
+  // Drifting boulders: slow, wall-bouncing, solid to shots and to the
+  // Warden. The Hollow drift straight through them — they are ghosts.
+  for (const obstacle of world.obstacles) {
+    obstacle.x += obstacle.vx * dt;
+    obstacle.y += obstacle.vy * dt;
+    obstacle.wobble += dt;
+    if (obstacle.x < obstacle.radius || obstacle.x > FIELD.width - obstacle.radius) {
+      obstacle.vx = -obstacle.vx;
+      obstacle.x = clamp(obstacle.x, obstacle.radius, FIELD.width - obstacle.radius);
+    }
+    if (obstacle.y < obstacle.radius || obstacle.y > FIELD.height - obstacle.radius) {
+      obstacle.vy = -obstacle.vy;
+      obstacle.y = clamp(obstacle.y, obstacle.radius, FIELD.height - obstacle.radius);
+    }
+    const distance = Math.hypot(player.x - obstacle.x, player.y - obstacle.y);
+    const overlap = obstacle.radius + player.radius - distance;
+    if (overlap > 0 && player.dashTimer <= 0) {
+      const before = player.hp;
+      damagePlayer(world, HAZARDS.obstacle.damage, audio);
+      // Shove the Warden clear so the boulder cannot grind a second hit
+      // out of the same touch.
+      const pushX = distance > 0 ? (player.x - obstacle.x) / distance : 1;
+      const pushY = distance > 0 ? (player.y - obstacle.y) / distance : 0;
+      player.x = clamp(player.x + pushX * (overlap + 2), player.radius, FIELD.width - player.radius);
+      player.y = clamp(player.y + pushY * (overlap + 2), player.radius, FIELD.height - player.radius);
+      if (player.hp < before) {
+        addText(world, player.x, player.y - 28, 'CRUSHED!', '#ff9f1c', 15);
+      }
+    }
+  }
+
+  // Danger zones: a warning ring blooms first, then the floor burns for a
+  // few seconds, ticking damage on whatever stands in it.
+  if (world.wave >= HAZARDS.zone.minWave) {
+    world.zoneTimer -= dt;
+    if (world.zoneTimer <= 0 && world.zones.length < HAZARDS.zone.maxActive) {
+      world.zoneTimer = HAZARDS.zone.interval;
+      world.zones.push({
+        x: range(world.random, HAZARDS.zone.radius + 20, FIELD.width - HAZARDS.zone.radius - 20),
+        y: range(world.random, HAZARDS.zone.radius + 20, FIELD.height - HAZARDS.zone.radius - 20),
+        radius: HAZARDS.zone.radius,
+        state: 'warn',
+        timer: HAZARDS.zone.warn,
+        tickTimer: HAZARDS.zone.tick,
+      });
+    }
+  }
+  for (let index = world.zones.length - 1; index >= 0; index -= 1) {
+    const zone = world.zones[index];
+    zone.timer -= dt;
+    if (zone.state === 'warn' && zone.timer <= 0) {
+      zone.state = 'active';
+      zone.timer = HAZARDS.zone.active;
+      zone.tickTimer = HAZARDS.zone.tick;
+      pushRing(world, zone.x, zone.y, zone.radius, '#ff4d6d', 0.4);
+    }
+    if (zone.state === 'active') {
+      zone.tickTimer -= dt;
+      if (zone.tickTimer <= 0) {
+        zone.tickTimer = HAZARDS.zone.tick;
+        if (Math.hypot(player.x - zone.x, player.y - zone.y) < zone.radius) {
+          damagePlayer(world, HAZARDS.zone.damage, audio);
+        }
+        for (let enemyIndex = world.enemies.length - 1; enemyIndex >= 0; enemyIndex -= 1) {
+          const enemy = world.enemies[enemyIndex];
+          if (Math.hypot(enemy.x - zone.x, enemy.y - zone.y) < zone.radius + enemy.radius * 0.5) {
+            enemy.hp -= HAZARDS.zone.damage;
+            enemy.flash = 0.12;
+            addDamageNumber(world, enemy.x, enemy.y - enemy.radius, HAZARDS.zone.damage, false);
+            if (enemy.hp <= 0) {
+              killEnemy(world, enemy, audio);
+              world.enemies.splice(enemyIndex, 1);
+            }
+          }
+        }
+      }
+    }
+    if (zone.timer <= 0) world.zones.splice(index, 1);
+  }
+
+  // Meteor shower (v6): only on a meteor wave. Half the rocks aim near the
+  // Warden, half fall anywhere — the warning ring is the whole defence.
+  if (world.mutation === 'meteor') {
+    world.meteorTimer -= dt;
+    if (world.meteorTimer <= 0) {
+      world.meteorTimer = MUTATIONS.meteor.interval;
+      const nearPlayer = world.random() < 0.5;
+      const targetX = nearPlayer
+        ? clamp(player.x + range(world.random, -120, 120), MUTATIONS.meteor.blast, FIELD.width - MUTATIONS.meteor.blast)
+        : range(world.random, MUTATIONS.meteor.blast, FIELD.width - MUTATIONS.meteor.blast);
+      const targetY = nearPlayer
+        ? clamp(player.y + range(world.random, -120, 120), MUTATIONS.meteor.blast, FIELD.height - MUTATIONS.meteor.blast)
+        : range(world.random, MUTATIONS.meteor.blast, FIELD.height - MUTATIONS.meteor.blast);
+      world.meteors.push({
+        x: targetX,
+        y: targetY,
+        warn: MUTATIONS.meteor.warn,
+        warnMax: MUTATIONS.meteor.warn,
+        blast: MUTATIONS.meteor.blast,
+      });
+    }
+  }
+  for (let index = world.meteors.length - 1; index >= 0; index -= 1) {
+    const meteor = world.meteors[index];
+    meteor.warn -= dt;
+    if (meteor.warn > 0) continue;
+    // Impact: the Warden takes a hit, the Hollow take a heavier one, and
+    // the arena shakes.
+    burstParticles(world, meteor.x, meteor.y, '#ff9f1c', 26, 380, 0.6, 4);
+    burstParticles(world, meteor.x, meteor.y, '#ffffff', 8, 220, 0.35, 2.5);
+    pushRing(world, meteor.x, meteor.y, meteor.blast, '#ff9f1c', 0.5);
+    world.shake = Math.max(world.shake, 6);
+    audio?.noise({ duration: 0.25, volume: 0.25, frequency: 500 });
+    if (Math.hypot(player.x - meteor.x, player.y - meteor.y) < meteor.blast + player.radius) {
+      damagePlayer(world, MUTATIONS.meteor.playerDamage, audio);
+    }
+    for (let enemyIndex = world.enemies.length - 1; enemyIndex >= 0; enemyIndex -= 1) {
+      const enemy = world.enemies[enemyIndex];
+      if (Math.hypot(enemy.x - meteor.x, enemy.y - meteor.y) < meteor.blast + enemy.radius) {
+        enemy.hp -= MUTATIONS.meteor.enemyDamage;
+        enemy.flash = 0.12;
+        addDamageNumber(world, enemy.x, enemy.y - enemy.radius, MUTATIONS.meteor.enemyDamage, true);
+        if (enemy.hp <= 0) {
+          killEnemy(world, enemy, audio);
+          world.enemies.splice(enemyIndex, 1);
+        }
+      }
+    }
+    world.meteors.splice(index, 1);
   }
 }
 
@@ -1159,7 +1368,7 @@ export function stepWorld(world, dt, input, audio) {
   if (world.spawnQueue.length > 0) {
     world.spawnTimer -= dt;
     if (world.spawnTimer <= 0) {
-      world.spawnTimer = spawnInterval(world.wave);
+      world.spawnTimer = spawnInterval(world.wave, world.mutation);
       const group = 1 + Math.floor(world.wave / 3);
       for (let count = 0; count < group && world.spawnQueue.length > 0; count += 1) {
         const kind = world.spawnQueue.shift();
@@ -1176,6 +1385,8 @@ export function stepWorld(world, dt, input, audio) {
   updateBullets(world, dt, audio);
   if (world.over) return EVENT_OVER;
   updateMines(world, dt, audio);
+  if (world.over) return EVENT_OVER;
+  updateHazards(world, dt, audio);
   if (world.over) return EVENT_OVER;
   updateParticles(world, dt);
   updatePickups(world, dt, audio);

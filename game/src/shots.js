@@ -200,6 +200,52 @@ export function stageShot(name, world, view) {
     }
     return { screen: SCREEN_PLAY, draft: null, best: world.best };
   }
+  if (name === 'mutation') {
+    // The v6 mutation frame: wave 15 is a meteor-shower boss wave. Six
+    // seconds of showcase play puts the Gloomlord and the falling rocks on
+    // screen; one meteor is then staged mid-fall and the mutation banner
+    // refreshed, so the frame shows the rule, the warning ring and the rock.
+    world.wave = 15;
+    startWave(world);
+    simulate(world, view, 6, 'showcase');
+    if (!world.over) {
+      const player = world.player;
+      world.meteors.push({
+        x: Math.min(Math.max(player.x + 130, 90), 870),
+        y: Math.min(Math.max(player.y - 50, 90), 510),
+        warn: 0.55,
+        warnMax: 0.9,
+        blast: 70,
+      });
+      world.banner = {
+        text: 'WAVE 15 — THE GLOOMLORD',
+        sub: 'MUTATION: METEOR SHOWER — rocks fall from the dark',
+        timer: 2.0,
+      };
+    }
+    return { screen: SCREEN_PLAY, draft: null, best: world.best };
+  }
+  if (name === 'hazard') {
+    // The v6 hazards frame: wave 3, where the boulders and the floor zones
+    // are already live. Eight seconds of showcase play, then one danger
+    // zone is staged active beside the Warden so the frame shows both
+    // hazards at once.
+    world.wave = 3;
+    startWave(world);
+    simulate(world, view, 8, 'showcase');
+    if (!world.over) {
+      const player = world.player;
+      world.zones.push({
+        x: Math.min(Math.max(player.x + 110, 100), 860),
+        y: Math.min(Math.max(player.y + 70, 100), 500),
+        radius: 70,
+        state: 'active',
+        timer: 3.5,
+        tickTimer: 0.8,
+      });
+    }
+    return { screen: SCREEN_PLAY, draft: null, best: world.best };
+  }
   if (name !== 'play' && name !== 'draft' && name !== 'over') {
     simulate(world, view, START_SECONDS, 'skilled');
     return { screen: SCREEN_TITLE, draft: null, best: world.best };

@@ -1,7 +1,7 @@
 // Lumenfall's renderer: every pixel the player (and the judge) sees — the
 // arena, the Warden, the Hollow, the HUD, and the title, draft, pause and
 // game-over screens. Drawing is pure: it reads the world, never mutates it.
-import { DRONE, FIELD, PALETTE } from './config.js';
+import { DRONE, FIELD, MUTATIONS, PALETTE } from './config.js';
 import { backgroundImage, drawIcon, drawSprite } from './sprites.js';
 import { WEAPON_NAMES } from './upgrades.js';
 import { clamp } from './random.js';
@@ -561,6 +561,107 @@ function drawMines(ctx, world) {
   ctx.restore();
 }
 
+/** The arena hazards (v6): floor danger zones, drifting boulders, and the
+ * meteor shower's warning rings with their falling rocks. Zones sit on the
+ * floor, so they draw first; boulders and meteors are solid objects above. */
+function drawHazards(ctx, world) {
+  ctx.save();
+  for (const zone of world.zones) {
+    const pulse = 0.5 + 0.5 * Math.sin(world.time * 6);
+    if (zone.state === 'warn') {
+      // Warning: a dashed amber ring, filling in as the burn approaches.
+      ctx.strokeStyle = `rgba(255, 159, 28, ${0.5 + 0.4 * pulse})`;
+      ctx.lineWidth = 3;
+      ctx.setLineDash([12, 8]);
+      ctx.beginPath();
+      ctx.arc(zone.x, zone.y, zone.radius, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = `rgba(255, 159, 28, ${0.05 + 0.08 * pulse})`;
+      ctx.beginPath();
+      ctx.arc(zone.x, zone.y, zone.radius, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      // Active: a burning floor — red fill, bright rim, DANGER at the heart.
+      ctx.fillStyle = `rgba(255, 46, 99, ${0.13 + 0.07 * pulse})`;
+      ctx.beginPath();
+      ctx.arc(zone.x, zone.y, zone.radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = `rgba(255, 77, 109, ${0.7 + 0.3 * pulse})`;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(zone.x, zone.y, zone.radius, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = `rgba(255, 143, 163, ${0.55 + 0.35 * pulse})`;
+      ctx.font = 'bold 12px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('DANGER', zone.x, zone.y);
+    }
+  }
+  for (const obstacle of world.obstacles) {
+    // A dark boulder with a cold rim and crater pits: solid cover that
+    // swallows shots and hurts to touch.
+    ctx.save();
+    ctx.translate(obstacle.x, obstacle.y);
+    ctx.fillStyle = '#1c2340';
+    ctx.strokeStyle = 'rgba(126, 240, 224, 0.5)';
+    ctx.shadowColor = '#7ef0e0';
+    ctx.shadowBlur = 8;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(0, 0, obstacle.radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+    ctx.beginPath();
+    ctx.arc(-8, -6, 7, 0, Math.PI * 2);
+    ctx.arc(9, 7, 5, 0, Math.PI * 2);
+    ctx.arc(2, -11, 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+  for (const meteor of world.meteors) {
+    // The warning ring on the floor, and the rock itself dropping out of
+    // the dark toward it — the ring is the whole defence.
+    const progress = 1 - meteor.warn / meteor.warnMax;
+    const rockY = meteor.y - 260 * (1 - progress);
+    const blink = 0.5 + 0.5 * Math.sin(world.time * 12);
+    ctx.strokeStyle = `rgba(255, 77, 109, ${0.55 + 0.4 * blink})`;
+    ctx.lineWidth = 3;
+    ctx.setLineDash([10, 7]);
+    ctx.beginPath();
+    ctx.arc(meteor.x, meteor.y, meteor.blast, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = `rgba(255, 77, 109, ${0.06 + 0.06 * blink})`;
+    ctx.beginPath();
+    ctx.arc(meteor.x, meteor.y, meteor.blast, 0, Math.PI * 2);
+    ctx.fill();
+    // The streak: a falling line from the rock to its target.
+    ctx.strokeStyle = 'rgba(255, 159, 28, 0.55)';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(meteor.x, rockY - 14);
+    ctx.lineTo(meteor.x, meteor.y);
+    ctx.stroke();
+    ctx.save();
+    ctx.translate(meteor.x, rockY);
+    ctx.fillStyle = '#2a1a12';
+    ctx.strokeStyle = '#ff9f1c';
+    ctx.shadowColor = '#ff9f1c';
+    ctx.shadowBlur = 14;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(0, 0, 12, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
 /** The lance beams: a fading cyan-white line down the aim direction. */
 function drawBeams(ctx, world) {
   ctx.save();
@@ -745,6 +846,14 @@ function drawHud(ctx, world) {
     ctx.font = 'bold 12px system-ui, sans-serif';
     ctx.fillStyle = '#ff9f1c';
     ctx.fillText(`STREAK x${world.streak}`, FIELD.width / 2, world.combo >= 2 ? 100 : 84);
+  }
+  // The wave mutation (v6): always visible while the wave runs, so the
+  // rule that changed the fight is never a surprise.
+  if (world.mutation) {
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 13px system-ui, sans-serif';
+    ctx.fillStyle = '#ff9f1c';
+    ctx.fillText(`MUTATION — ${MUTATIONS[world.mutation].label}`, FIELD.width / 2, 112);
   }
   // Controls hint, bottom left, faint.
   ctx.textAlign = 'left';
@@ -954,6 +1063,7 @@ export function drawGame(ctx, world, screen, ui = {}) {
   drawArena(ctx, world);
   drawPickups(ctx, world);
   drawMines(ctx, world);
+  drawHazards(ctx, world);
   drawAimLines(ctx, world);
   for (const enemy of world.enemies) drawEnemy(ctx, enemy);
   drawGhosts(ctx, world);

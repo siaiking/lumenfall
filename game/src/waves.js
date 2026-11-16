@@ -1,7 +1,7 @@
 // The wave director: how many of the Hollow arrive, in what mix, and how
 // they scale as the waves go on. A wave is a budget of points; the director
 // buys the strongest mix it can afford and trickles it in from the edge.
-import { ENEMIES, WAVE } from './config.js';
+import { ELITE, ENEMIES, MUTATION_ORDER, MUTATIONS, WAVE } from './config.js';
 import { range, shuffle } from './random.js';
 
 const COSTS = { drifter: 1, skitter: 1, spitter: 2, shooter: 2, splitter: 2, dasher: 2, brute: 4 };
@@ -46,6 +46,23 @@ export function isBossWave(wave) {
   return wave % WAVE.bossEvery === 0;
 }
 
+/**
+ * The mutation rule of a wave (v6): every fifth wave — the boss waves —
+ * twists one rule, rotating accelerated -> elite -> meteor. Any other
+ * wave plays straight.
+ */
+export function mutationForWave(wave) {
+  if (wave % WAVE.mutationEvery !== 0) return null;
+  const cycle = Math.floor(wave / WAVE.mutationEvery) - 1;
+  return MUTATION_ORDER[cycle % MUTATION_ORDER.length];
+}
+
+/** The elite roll on this wave: an elite wave is thick with gold rings. */
+export function eliteChance(wave, mutation) {
+  if (mutation === 'elite') return MUTATIONS.elite.eliteChance;
+  return ELITE.chance;
+}
+
 /** The kinds the director may buy on this wave. */
 export function unlockedKinds(wave) {
   return Object.keys(UNLOCKS).filter((kind) => UNLOCKS[kind] <= wave);
@@ -88,21 +105,26 @@ export function waveComposition(wave, random) {
   return ordered;
 }
 
-/** Seconds between spawns on this wave, tightening as the waves climb. */
-export function spawnInterval(wave) {
-  return Math.max(WAVE.spawnIntervalMin, WAVE.spawnInterval - wave * 0.06);
+/** Seconds between spawns on this wave, tightening as the waves climb. An
+ * accelerated wave (v6) trickles its queue in faster still. */
+export function spawnInterval(wave, mutation = null) {
+  const base = Math.max(WAVE.spawnIntervalMin, WAVE.spawnInterval - wave * 0.06);
+  if (mutation === 'accelerated') return base * MUTATIONS.accelerated.spawnMult;
+  return base;
 }
 
 /**
  * An enemy's stats on this wave: health grows about 12% a wave, speed a
- * little, so later waves are denser and tougher rather than just more.
+ * little, so later waves are denser and tougher rather than just more. An
+ * accelerated wave (v6) makes everything faster on top of that.
  */
-export function enemyStats(kind, wave) {
+export function enemyStats(kind, wave, mutation = null) {
   const base = ENEMIES[kind];
   const growth = 1 + (wave - 1) * 0.12;
+  const speedMult = mutation === 'accelerated' ? MUTATIONS.accelerated.speedMult : 1;
   return {
     radius: base.radius,
-    speed: base.speed * (1 + Math.min(0.4, (wave - 1) * 0.02)),
+    speed: base.speed * (1 + Math.min(0.4, (wave - 1) * 0.02)) * speedMult,
     hp: Math.round(base.hp * growth),
     maxHp: Math.round(base.hp * growth),
     damage: base.damage,
