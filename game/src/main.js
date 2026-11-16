@@ -7,6 +7,7 @@ import { FIELD, STEP } from './config.js';
 import { Input } from './input.js';
 import { drawGame, SCREEN_DRAFT, SCREEN_OVER, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
 import { makeAutopilot, stageShot } from './shots.js';
+import { loadSprites } from './sprites.js';
 import { applyDraftPick, beginRun, createWorld, EVENT_OVER, EVENT_WAVE_CLEAR, startWave, stepWorld } from './world.js';
 import { rollDraft } from './upgrades.js';
 
@@ -127,6 +128,10 @@ function gameOver() {
   saveBest();
   status.textContent = `Game over. Score ${world.score}, wave ${world.wave}.`;
 }
+
+// Sprites load before the first frame in either mode, so a screenshot
+// never catches the procedural stand-ins; a failed load just falls back.
+await loadSprites();
 
 if (shotName) {
   // Shot mode: one deterministic frame, then signal readiness.

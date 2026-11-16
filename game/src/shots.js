@@ -146,6 +146,14 @@ export function stageShot(name, world, view) {
     }
     return { screen: SCREEN_PLAY, draft: null, best: world.best };
   }
+  if (name === 'boss') {
+    // Jump straight to wave 5 (a boss wave): the Gloomlord is first in the
+    // spawn queue, so a few seconds of showcase play puts it on screen.
+    world.wave = 5;
+    startWave(world);
+    simulate(world, view, 6, 'showcase');
+    return { screen: SCREEN_PLAY, draft: null, best: world.best };
+  }
   if (name !== 'play' && name !== 'draft' && name !== 'over') {
     simulate(world, view, START_SECONDS, 'skilled');
     return { screen: SCREEN_TITLE, draft: null, best: world.best };

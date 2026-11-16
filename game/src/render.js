@@ -2,6 +2,7 @@
 // arena, the Warden, the Hollow, the HUD, and the title, draft, pause and
 // game-over screens. Drawing is pure: it reads the world, never mutates it.
 import { DRONE, FIELD, PALETTE } from './config.js';
+import { drawSprite } from './sprites.js';
 import { WEAPON_NAMES } from './upgrades.js';
 import { clamp } from './random.js';
 
@@ -106,39 +107,43 @@ function drawPickups(ctx, world) {
       drawHeart(ctx, pickup.x, pickup.y, 22, PALETTE.heart);
     } else if (pickup.kind === 'shield') {
       // A cyan hex-shield: one blocked hit, waiting to be taken.
-      ctx.strokeStyle = '#7ef0e0';
-      ctx.fillStyle = 'rgba(126, 240, 224, 0.25)';
-      ctx.shadowColor = '#7ef0e0';
-      ctx.shadowBlur = 12;
-      ctx.lineWidth = 2;
-      ctx.translate(pickup.x, pickup.y);
-      ctx.beginPath();
-      for (let index = 0; index < 6; index += 1) {
-        const angle = (index / 6) * Math.PI * 2 - Math.PI / 2;
-        const x = Math.cos(angle) * 11;
-        const y = Math.sin(angle) * 11;
-        if (index === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
+      if (!drawSprite(ctx, 'pickup-shield', pickup.x, pickup.y)) {
+        ctx.strokeStyle = '#7ef0e0';
+        ctx.fillStyle = 'rgba(126, 240, 224, 0.25)';
+        ctx.shadowColor = '#7ef0e0';
+        ctx.shadowBlur = 12;
+        ctx.lineWidth = 2;
+        ctx.translate(pickup.x, pickup.y);
+        ctx.beginPath();
+        for (let index = 0; index < 6; index += 1) {
+          const angle = (index / 6) * Math.PI * 2 - Math.PI / 2;
+          const x = Math.cos(angle) * 11;
+          const y = Math.sin(angle) * 11;
+          if (index === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
       }
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
     } else if (pickup.kind === 'magnet') {
       // An amber horseshoe magnet: eight seconds of triple pull.
-      ctx.strokeStyle = '#ff9f1c';
-      ctx.shadowColor = '#ff9f1c';
-      ctx.shadowBlur = 12;
-      ctx.lineWidth = 5;
-      ctx.translate(pickup.x, pickup.y);
-      ctx.beginPath();
-      ctx.arc(0, -2, 9, Math.PI, 0);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(-9, -2);
-      ctx.lineTo(-9, 6);
-      ctx.moveTo(9, -2);
-      ctx.lineTo(9, 6);
-      ctx.stroke();
+      if (!drawSprite(ctx, 'pickup-magnet', pickup.x, pickup.y)) {
+        ctx.strokeStyle = '#ff9f1c';
+        ctx.shadowColor = '#ff9f1c';
+        ctx.shadowBlur = 12;
+        ctx.lineWidth = 5;
+        ctx.translate(pickup.x, pickup.y);
+        ctx.beginPath();
+        ctx.arc(0, -2, 9, Math.PI, 0);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(-9, -2);
+        ctx.lineTo(-9, 6);
+        ctx.moveTo(9, -2);
+        ctx.lineTo(9, 6);
+        ctx.stroke();
+      }
     }
     ctx.restore();
   }
@@ -168,6 +173,24 @@ function drawEnemy(ctx, enemy) {
     ctx.setLineDash([]);
     ctx.restore();
   }
+  // Sprite art first: the art faces right, so it rotates with the heading
+  // for the directional kinds and stays put for the round ones.
+  const spriteAngle = enemy.kind === 'drifter' ? enemy.angle * 0.3
+    : (enemy.kind === 'skitter' || enemy.kind === 'spitter' || enemy.kind === 'shooter' || enemy.kind === 'dasher')
+      ? enemy.angle : 0;
+  const sprited = drawSprite(ctx, enemy.kind, 0, 0, spriteAngle);
+  if (sprited && flash) {
+    // Hit flash: a white wash over the sprite instead of a white shape.
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = 0.55;
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(0, 0, radius * 0.9, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+  if (!sprited) {
   if (enemy.kind === 'drifter') {
     ctx.beginPath();
     for (let index = 0; index < 8; index += 1) {
@@ -274,6 +297,9 @@ function drawEnemy(ctx, enemy) {
     ctx.arc(-radius * 0.3, -radius * 0.15, 5, 0, Math.PI * 2);
     ctx.arc(radius * 0.3, -radius * 0.15, 5, 0, Math.PI * 2);
     ctx.fill();
+  }
+  }
+  if (enemy.kind === 'boss') {
     // Ring mode: a dashed circle warns that the next attack is the gapped
     // ring, not a chase.
     if (enemy.modeIndex === 1) {
@@ -377,24 +403,31 @@ function drawPlayer(ctx, world) {
   ctx.translate(player.x, player.y);
   ctx.shadowColor = PALETTE.lantern;
   ctx.shadowBlur = 22;
-  ctx.fillStyle = PALETTE.player;
-  ctx.beginPath();
-  ctx.arc(0, 0, player.radius, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.shadowBlur = 0;
-  ctx.fillStyle = PALETTE.playerCore;
-  ctx.beginPath();
-  ctx.arc(0, 0, player.radius * 0.55, 0, Math.PI * 2);
-  ctx.fill();
-  // The lantern points where the Warden aims.
-  ctx.rotate(player.angle);
-  ctx.fillStyle = PALETTE.lantern;
-  ctx.beginPath();
-  ctx.arc(player.radius + 4, 0, 5, 0, Math.PI * 2);
-  ctx.fill();
+  const sprited = drawSprite(ctx, 'player', 0, 0, player.angle);
+  if (!sprited) {
+    ctx.fillStyle = PALETTE.player;
+    ctx.beginPath();
+    ctx.arc(0, 0, player.radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = PALETTE.playerCore;
+    ctx.beginPath();
+    ctx.arc(0, 0, player.radius * 0.55, 0, Math.PI * 2);
+    ctx.fill();
+    // The lantern points where the Warden aims.
+    ctx.rotate(player.angle);
+    ctx.fillStyle = PALETTE.lantern;
+    ctx.beginPath();
+    ctx.arc(player.radius + 4, 0, 5, 0, Math.PI * 2);
+    ctx.fill();
+  } else {
+    // The sprite's nose is the lantern: keep the frame rotated so the
+    // muzzle flash below lands at the ship's nose.
+    ctx.rotate(player.angle);
+  }
   if (player.muzzle > 0) {
     // A four-point star flash at the lantern's mouth.
-    const mx = player.radius + 12;
+    const mx = player.radius + (sprited ? 20 : 12);
     ctx.fillStyle = '#fff3b0';
     ctx.beginPath();
     for (let point = 0; point < 8; point += 1) {
@@ -527,17 +560,21 @@ function drawBullets(ctx, world) {
       ctx.lineTo(bullet.x, bullet.y);
       ctx.stroke();
     }
-    ctx.fillStyle = color;
-    ctx.shadowColor = color;
-    ctx.shadowBlur = 10;
-    ctx.beginPath();
-    ctx.arc(bullet.x, bullet.y, bullet.radius, 0, Math.PI * 2);
-    ctx.fill();
+    const angle = Math.atan2(bullet.vy, bullet.vx);
+    if (!drawSprite(ctx, 'bullet', bullet.x, bullet.y, angle)) {
+      ctx.fillStyle = color;
+      ctx.shadowColor = color;
+      ctx.shadowBlur = 10;
+      ctx.beginPath();
+      ctx.arc(bullet.x, bullet.y, bullet.radius, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
   for (const orb of world.enemyBullets) {
     // Shooter orbs are amber, boss and spitter orbs pink: the colour tells
     // the player what fired it.
     const color = orb.color ?? '#ff4d8d';
+    if (drawSprite(ctx, 'enemy-bullet', orb.x, orb.y)) continue;
     ctx.fillStyle = color;
     ctx.shadowColor = color;
     ctx.shadowBlur = 12;
