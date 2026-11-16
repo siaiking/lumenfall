@@ -5,7 +5,7 @@
 import { FIELD, STEP } from './config.js';
 import { EVENT_OVER, EVENT_WAVE_CLEAR, applyDraftPick, beginRun, resetWorld, startWave, stepWorld } from './world.js';
 import { SCREEN_DRAFT, SCREEN_OVER, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
-import { rollDraft } from './upgrades.js';
+import { rollDraft, UPGRADES } from './upgrades.js';
 
 const START_SECONDS = 8;
 const PLAY_SECONDS = 26;
@@ -110,6 +110,42 @@ function simulate(world, view, seconds, mode) {
  */
 export function stageShot(name, world, view) {
   beginRun(world);
+  if (name === 'weapons' || name === 'laser') {
+    // The v4 showcase: the Warden already holds the new weapons, so the
+    // frame shows them firing instead of hoping a draft rolls them.
+    const pick = (id) => applyDraftPick(world, UPGRADES.find((u) => u.id === id));
+    if (name === 'weapons') {
+      pick('mine-layer');
+      pick('scatter-shot');
+    } else {
+      pick('heavy-rounds');
+      pick('heavy-rounds');
+      pick('lance-beam');
+    }
+    // Nine seconds of showcase play; a cleared wave rolls straight into
+    // the next one (no draft pick — the weapons are the point), so the
+    // frame always shows a live fight.
+    const pilot = makeAutopilot(world, view, 'showcase');
+    for (let step = 0; step < 9 * 60; step += 1) {
+      pilot.update();
+      const event = stepWorld(world, SAMPLE, pilot, null);
+      if (event === EVENT_WAVE_CLEAR) {
+        world.wave += 1;
+        startWave(world);
+      }
+      if (event === EVENT_OVER) break;
+    }
+    // One last shot, fired point-blank at the frame: a beam lives 0.18 s
+    // and pellets 0.6 s, so without this the captured frame could catch
+    // the weapon between volleys and show nothing of it.
+    if (!world.over) {
+      world.player.fireTimer = 0;
+      pilot.update();
+      pilot.wantFire = true;
+      stepWorld(world, SAMPLE, pilot, null);
+    }
+    return { screen: SCREEN_PLAY, draft: null, best: world.best };
+  }
   if (name !== 'play' && name !== 'draft' && name !== 'over') {
     simulate(world, view, START_SECONDS, 'skilled');
     return { screen: SCREEN_TITLE, draft: null, best: world.best };

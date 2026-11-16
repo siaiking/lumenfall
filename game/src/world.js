@@ -2,10 +2,10 @@
 // particles, pickups, the combo, and the wave flow. It advances in fixed
 // 1/60 s steps and uses only its own seeded random source, so a screenshot
 // scene replays the same world from the same seed.
-import { BOSS, COMBO_MAX, COMBO_MILESTONES, COMBO_WINDOW, DRONE, ELITE, ENEMIES, FIELD, PLAYER, STEP, WAVE } from './config.js';
+import { BOSS, COMBO_MAX, COMBO_MILESTONES, COMBO_WINDOW, DRONE, ELITE, ENEMIES, FIELD, PLAYER, STEP, WAVE, WEAPONS } from './config.js';
 import { clamp, makeRandom, range } from './random.js';
 import { enemyStats, isBossWave, spawnInterval, spawnPoint, waveComposition } from './waves.js';
-import { applyUpgrade } from './upgrades.js';
+import { applyUpgrade, synergyText, upgradeLevel } from './upgrades.js';
 
 export const EVENT_NONE = 0;
 export const EVENT_WAVE_CLEAR = 1;
@@ -33,6 +33,13 @@ function makePlayer() {
     drones: 0,
     droneAngle: 0,
     droneFireTimer: 0,
+    // The weapon systems (v4): 'pulse' is the starting bolt; 'scatter' and
+    // 'laser' replace the primary fire, while mines are auxiliary and stack
+    // with either primary.
+    weapon: 'pulse',
+    weaponLevel: 0,
+    mineLevel: 0,
+    mineTimer: 0,
     shield: 0,
     magnetTimer: 0,
     ghostTimer: 0,
@@ -66,6 +73,8 @@ export function createWorld(seed, best = 0) {
     enemies: [],
     bullets: [],
     enemyBullets: [],
+    mines: [],
+    beams: [],
     particles: [],
     rings: [],
     ghosts: [],
@@ -338,6 +347,9 @@ function fireBullets(world, audio) {
       life: player.bulletLife,
       maxLife: player.bulletLife,
       radius: 4,
+      kind: 'bolt',
+      color: '#ffe66d',
+      trailColor: 'rgba(255, 230, 109, 0.35)',
       trail: [],
       hit: new Set(),
     });
@@ -345,6 +357,91 @@ function fireBullets(world, audio) {
   player.muzzle = 0.06;
   world.stats.shots += count;
   audio?.shoot();
+}
+
+/**
+ * The Scattergun: a fan of pellets, wide and close-range. More pellets per
+ * weapon level; Split Shot adds two more (synergy), and pellets inherit the
+ * player's pierce, so Piercing Light carries over too.
+ */
+function fireScatter(world, audio) {
+  const player = world.player;
+  const count = WEAPONS.scatter.pelletsBase
+    + WEAPONS.scatter.pelletsPerLevel * (player.weaponLevel - 1)
+    + (upgradeLevel(player, 'split-shot') > 0 ? 2 : 0);
+  const spread = WEAPONS.scatter.spread;
+  for (let index = 0; index < count; index += 1) {
+    const offset = count === 1 ? 0 : (index - (count - 1) / 2) * spread;
+    const angle = player.angle + offset;
+    world.bullets.push({
+      x: player.x + Math.cos(angle) * (player.radius + 6),
+      y: player.y + Math.sin(angle) * (player.radius + 6),
+      vx: Math.cos(angle) * player.bulletSpeed,
+      vy: Math.sin(angle) * player.bulletSpeed,
+      damage: Math.max(0.5, player.bulletDamage * WEAPONS.scatter.damageMult),
+      pierce: player.pierce,
+      ricochet: 0,
+      life: player.bulletLife * WEAPONS.scatter.rangeMult,
+      maxLife: player.bulletLife * WEAPONS.scatter.rangeMult,
+      radius: 3,
+      kind: 'pellet',
+      color: '#ffb703',
+      trailColor: 'rgba(255, 183, 3, 0.35)',
+      trail: [],
+      hit: new Set(),
+    });
+  }
+  player.muzzle = 0.06;
+  world.stats.shots += count;
+  audio?.shoot();
+  audio?.noise({ duration: 0.08, volume: 0.1, frequency: 1800 });
+}
+
+/**
+ * The Lance Beam: a piercing beam down the aim line that damages every
+ * Hollow it crosses — no pierce limit, no travel time. Heavy Rounds add
+ * beam damage and Long Barrel adds range (synergies); wider with Piercing.
+ */
+function fireLaser(world, audio) {
+  const player = world.player;
+  const length = (WEAPONS.laser.baseLength + WEAPONS.laser.lengthPerLevel * (player.weaponLevel - 1))
+    * (1 + 0.25 * upgradeLevel(player, 'long-barrel'));
+  const width = WEAPONS.laser.widthBase + 4 * upgradeLevel(player, 'piercing');
+  const damage = player.bulletDamage * 2 + player.weaponLevel + upgradeLevel(player, 'heavy-rounds');
+  const dirX = Math.cos(player.angle);
+  const dirY = Math.sin(player.angle);
+  const halfWidth = width / 2;
+  world.beams.push({
+    x: player.x,
+    y: player.y,
+    angle: player.angle,
+    length,
+    width,
+    life: 0.18,
+    maxLife: 0.18,
+  });
+  for (let index = world.enemies.length - 1; index >= 0; index -= 1) {
+    const enemy = world.enemies[index];
+    const relX = enemy.x - player.x;
+    const relY = enemy.y - player.y;
+    const along = relX * dirX + relY * dirY;
+    if (along < 0 || along > length + enemy.radius) continue;
+    const across = Math.abs(relX * dirY - relY * dirX);
+    if (across > enemy.radius + halfWidth) continue;
+    world.stats.hits += 1;
+    enemy.hp -= damage;
+    enemy.flash = 0.12;
+    enemy.knockX += dirX * 120;
+    enemy.knockY += dirY * 120;
+    burstParticles(world, enemy.x, enemy.y, '#b8fff1', 5, 160, 0.3, 2.5);
+    if (enemy.hp <= 0) {
+      killEnemy(world, enemy, audio);
+      world.enemies.splice(index, 1);
+    }
+  }
+  player.muzzle = 0.06;
+  world.stats.shots += 1;
+  audio?.tone({ frequency: 1400, end: 200, type: 'sawtooth', duration: 0.12, volume: 0.14 });
 }
 
 function fireEnemyOrb(world, enemy, speed = 185, spread = 0, color = '#ff4d8d') {
@@ -475,8 +572,35 @@ function updatePlayer(world, dt, input, audio) {
   player.y = clamp(player.y + player.vy * dt, player.radius, FIELD.height - player.radius);
 
   if (input.firing() && player.fireTimer <= 0) {
-    player.fireTimer = player.fireInterval;
-    fireBullets(world, audio);
+    if (player.weapon === 'laser') {
+      player.fireTimer = player.fireInterval * WEAPONS.laser.fireMult;
+      fireLaser(world, audio);
+    } else if (player.weapon === 'scatter') {
+      player.fireTimer = player.fireInterval;
+      fireScatter(world, audio);
+    } else {
+      player.fireTimer = player.fireInterval;
+      fireBullets(world, audio);
+    }
+  }
+
+  // The Mine Layer: a mine drops at the Warden's feet on a beat — faster
+  // with Rapid Trigger (synergy), and never more than the cap alive.
+  if (player.mineLevel > 0) {
+    player.mineTimer -= dt;
+    if (player.mineTimer <= 0) {
+      const interval = Math.max(1, WEAPONS.mine.intervalBase - WEAPONS.mine.intervalPerLevel * (player.mineLevel - 1))
+        * Math.pow(0.88, upgradeLevel(player, 'rapid-trigger'));
+      player.mineTimer = interval;
+      if (world.mines.length >= WEAPONS.mine.cap) world.mines.shift();
+      world.mines.push({
+        x: player.x,
+        y: player.y,
+        arm: WEAPONS.mine.armTime,
+        life: WEAPONS.mine.life,
+        radius: 13,
+      });
+    }
   }
 
   // Orbital drones: each one circles the Warden and, on its own beat,
@@ -509,6 +633,9 @@ function updatePlayer(world, dt, input, audio) {
           life: 0.8,
           maxLife: 0.8,
           radius: 3,
+          kind: 'bolt',
+          color: '#ffe66d',
+          trailColor: 'rgba(255, 230, 109, 0.35)',
           trail: [],
           hit: new Set(),
         });
@@ -806,6 +933,52 @@ function updateBullets(world, dt, audio) {
   }
 }
 
+/**
+ * The mines: they arm after half a second, then detonate when a Hollow
+ * wanders into the trigger radius, blasting everything in the blast radius.
+ * Nova Burst widens the blast and adds damage (synergy).
+ */
+function updateMines(world, dt, audio) {
+  const player = world.player;
+  const damage = WEAPONS.mine.damageBase + player.mineLevel + upgradeLevel(player, 'nova-burst');
+  const blastRadius = WEAPONS.mine.blastRadius + 30 * upgradeLevel(player, 'nova-burst');
+  for (let index = world.mines.length - 1; index >= 0; index -= 1) {
+    const mine = world.mines[index];
+    mine.arm -= dt;
+    mine.life -= dt;
+    let triggered = mine.life <= 0;
+    if (!triggered && mine.arm <= 0) {
+      for (const enemy of world.enemies) {
+        if (Math.hypot(enemy.x - mine.x, enemy.y - mine.y) < WEAPONS.mine.triggerRadius) {
+          triggered = true;
+          break;
+        }
+      }
+    }
+    if (!triggered) continue;
+    burstParticles(world, mine.x, mine.y, '#ff9f1c', 26, 380, 0.6, 4);
+    burstParticles(world, mine.x, mine.y, '#ffffff', 8, 220, 0.35, 2.5);
+    pushRing(world, mine.x, mine.y, blastRadius, '#ff9f1c', 0.5);
+    world.shake = Math.max(world.shake, 4);
+    audio?.noise({ duration: 0.25, volume: 0.25, frequency: 700 });
+    for (let enemyIndex = world.enemies.length - 1; enemyIndex >= 0; enemyIndex -= 1) {
+      const enemy = world.enemies[enemyIndex];
+      const distance = Math.hypot(enemy.x - mine.x, enemy.y - mine.y);
+      if (distance > blastRadius + enemy.radius) continue;
+      enemy.hp -= damage;
+      enemy.flash = 0.12;
+      const push = 260 / Math.max(40, distance);
+      enemy.knockX += ((enemy.x - mine.x) / Math.max(1, distance)) * push;
+      enemy.knockY += ((enemy.y - mine.y) / Math.max(1, distance)) * push;
+      if (enemy.hp <= 0) {
+        killEnemy(world, enemy, audio);
+        world.enemies.splice(enemyIndex, 1);
+      }
+    }
+    world.mines.splice(index, 1);
+  }
+}
+
 function updateParticles(world, dt) {
   for (let index = world.particles.length - 1; index >= 0; index -= 1) {
     const particle = world.particles[index];
@@ -840,6 +1013,11 @@ function updateParticles(world, dt) {
     text.life -= dt;
     text.y -= 34 * dt;
     if (text.life <= 0) world.texts.splice(index, 1);
+  }
+  for (let index = world.beams.length - 1; index >= 0; index -= 1) {
+    const beam = world.beams[index];
+    beam.life -= dt;
+    if (beam.life <= 0) world.beams.splice(index, 1);
   }
 }
 
@@ -926,6 +1104,8 @@ export function stepWorld(world, dt, input, audio) {
   if (world.over) return EVENT_OVER;
   updateBullets(world, dt, audio);
   if (world.over) return EVENT_OVER;
+  updateMines(world, dt, audio);
+  if (world.over) return EVENT_OVER;
   updateParticles(world, dt);
   updatePickups(world, dt, audio);
 
@@ -945,6 +1125,12 @@ export function stepWorld(world, dt, input, audio) {
 /** Applies a drafted card to the player. */
 export function applyDraftPick(world, upgrade) {
   applyUpgrade(world.player, upgrade);
+  // A synergy landing gets a gold callout above the Warden, so the combo
+  // is visible the moment it happens.
+  const synergy = synergyText(world.player, upgrade);
+  if (synergy) {
+    addText(world, world.player.x, world.player.y - 40, synergy, '#ffd166', 17);
+  }
 }
 
 /** The enemy kinds on the field, for the HUD's remaining count. */

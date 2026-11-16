@@ -95,7 +95,61 @@ export const UPGRADES = [
     max: 3,
     apply: (player) => { player.ricochet += 1; },
   },
+  {
+    id: 'scatter-shot',
+    name: 'Scattergun',
+    desc: 'Primary becomes a fan of pellets',
+    max: 3,
+    apply: (player) => {
+      player.weapon = 'scatter';
+      player.weaponLevel = upgradeLevel(player, 'scatter-shot');
+    },
+  },
+  {
+    id: 'lance-beam',
+    name: 'Lance Beam',
+    desc: 'Primary becomes a piercing beam',
+    max: 3,
+    apply: (player) => {
+      player.weapon = 'laser';
+      player.weaponLevel = upgradeLevel(player, 'lance-beam');
+    },
+  },
+  {
+    id: 'mine-layer',
+    name: 'Mine Layer',
+    desc: 'Drops proximity mines that blast crowds',
+    max: 3,
+    apply: (player) => {
+      player.mineLevel = upgradeLevel(player, 'mine-layer');
+    },
+  },
 ];
+
+/** Display names for the HUD's weapon readout. */
+export const WEAPON_NAMES = { pulse: 'PULSE', scatter: 'SCATTER', laser: 'LANCE' };
+
+/**
+ * The synergy a freshly picked card gains from upgrades already held, if
+ * any — the draft callout that tells the player the combo landed. Returns
+ * the callout text, or null when the card stands alone.
+ */
+export function synergyText(player, upgrade) {
+  const level = (id) => player.upgrades[id] ?? 0;
+  if (upgrade.id === 'scatter-shot') {
+    if (level('split-shot') > 0) return 'SYNERGY: Split Shot +2 pellets';
+    if (level('piercing') > 0) return 'SYNERGY: Piercing Light — pellets pierce';
+  }
+  if (upgrade.id === 'lance-beam') {
+    if (level('heavy-rounds') > 0) return `SYNERGY: Heavy Rounds +${level('heavy-rounds')} beam damage`;
+    if (level('long-barrel') > 0) return `SYNERGY: Long Barrel +${level('long-barrel') * 25}% beam range`;
+  }
+  if (upgrade.id === 'mine-layer') {
+    if (level('nova-burst') > 0) return `SYNERGY: Nova Burst +${level('nova-burst') * 30} blast radius`;
+    if (level('rapid-trigger') > 0) return 'SYNERGY: Rapid Trigger drops mines faster';
+  }
+  return null;
+}
 
 /** How many times the player already holds an upgrade. */
 export function upgradeLevel(player, id) {

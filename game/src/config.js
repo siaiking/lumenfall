@@ -76,6 +76,15 @@ export const DRONE = { orbitRadius: 56, orbitSpeed: 3.4, fireInterval: 0.85, bul
 // Combo milestones: reaching x3 or x5 once per run pays a bonus outright.
 export const COMBO_MILESTONES = { 3: 30, 5: 50 };
 
+// The three weapon systems (v4): scatter fires a fan of pellets, the lance
+// fires a piercing beam down a line, and the mine layer drops proximity
+// mines — the mines are auxiliary, so they stack with either primary.
+export const WEAPONS = {
+  scatter: { pelletsBase: 5, pelletsPerLevel: 2, spread: 0.16, damageMult: 0.6, rangeMult: 0.7 },
+  laser: { fireMult: 2.2, baseLength: 520, lengthPerLevel: 60, widthBase: 12 },
+  mine: { intervalBase: 2.4, intervalPerLevel: 0.3, cap: 8, armTime: 0.5, triggerRadius: 62, blastRadius: 110, damageBase: 2, life: 14 },
+};
+
 // A wave is a budget of points spent on enemy kinds; the director buys the
 // strongest mix it can afford and trickles them in from the arena's edge.
 export const WAVE = {

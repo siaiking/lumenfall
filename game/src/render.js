@@ -2,6 +2,7 @@
 // arena, the Warden, the Hollow, the HUD, and the title, draft, pause and
 // game-over screens. Drawing is pure: it reads the world, never mutates it.
 import { DRONE, FIELD, PALETTE } from './config.js';
+import { WEAPON_NAMES } from './upgrades.js';
 import { clamp } from './random.js';
 
 export const SCREEN_TITLE = 'title';
@@ -451,13 +452,74 @@ function drawPlayer(ctx, world) {
   }
 }
 
+function drawMines(ctx, world) {
+  ctx.save();
+  for (const mine of world.mines) {
+    const armed = mine.arm <= 0;
+    const blink = armed ? 0.6 + 0.4 * Math.sin(world.time * 10) : 0.4 + 0.3 * Math.sin(world.time * 4);
+    // A spiked dark shell with a blinking core: amber while arming, red
+    // once live — the blink is the warning.
+    ctx.translate(mine.x, mine.y);
+    ctx.fillStyle = '#2a2438';
+    ctx.strokeStyle = armed ? `rgba(255, 77, 109, ${blink})` : `rgba(255, 159, 28, ${blink})`;
+    ctx.lineWidth = 2;
+    ctx.shadowColor = armed ? '#ff4d6d' : '#ff9f1c';
+    ctx.shadowBlur = 10;
+    ctx.beginPath();
+    for (let index = 0; index < 8; index += 1) {
+      const angle = (index / 8) * Math.PI * 2;
+      const outer = index % 2 === 0 ? mine.radius : mine.radius * 0.6;
+      const x = Math.cos(angle) * outer;
+      const y = Math.sin(angle) * outer;
+      if (index === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = armed ? '#ff4d6d' : '#ff9f1c';
+    ctx.beginPath();
+    ctx.arc(0, 0, 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.translate(-mine.x, -mine.y);
+  }
+  ctx.restore();
+}
+
+/** The lance beams: a fading cyan-white line down the aim direction. */
+function drawBeams(ctx, world) {
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  for (const beam of world.beams) {
+    const fraction = Math.max(0, beam.life / beam.maxLife);
+    const endX = beam.x + Math.cos(beam.angle) * beam.length;
+    const endY = beam.y + Math.sin(beam.angle) * beam.length;
+    ctx.globalAlpha = fraction;
+    ctx.strokeStyle = 'rgba(126, 240, 224, 0.5)';
+    ctx.lineWidth = beam.width + 6;
+    ctx.beginPath();
+    ctx.moveTo(beam.x, beam.y);
+    ctx.lineTo(endX, endY);
+    ctx.stroke();
+    ctx.strokeStyle = '#b8fff1';
+    ctx.lineWidth = beam.width * 0.45;
+    ctx.beginPath();
+    ctx.moveTo(beam.x, beam.y);
+    ctx.lineTo(endX, endY);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function drawBullets(ctx, world) {
   ctx.save();
   ctx.globalCompositeOperation = 'lighter';
   for (const bullet of world.bullets) {
+    const color = bullet.color ?? PALETTE.bullet;
     // The trail: the bullet's last few steps, fading back.
     if (bullet.trail.length > 1) {
-      ctx.strokeStyle = 'rgba(255, 230, 109, 0.35)';
+      ctx.strokeStyle = bullet.trailColor ?? 'rgba(255, 230, 109, 0.35)';
       ctx.lineWidth = 3;
       ctx.beginPath();
       ctx.moveTo(bullet.trail[0].x, bullet.trail[0].y);
@@ -465,8 +527,8 @@ function drawBullets(ctx, world) {
       ctx.lineTo(bullet.x, bullet.y);
       ctx.stroke();
     }
-    ctx.fillStyle = PALETTE.bullet;
-    ctx.shadowColor = PALETTE.bullet;
+    ctx.fillStyle = color;
+    ctx.shadowColor = color;
     ctx.shadowBlur = 10;
     ctx.beginPath();
     ctx.arc(bullet.x, bullet.y, bullet.radius, 0, Math.PI * 2);
@@ -567,6 +629,11 @@ function drawHud(ctx, world) {
   ctx.font = '13px system-ui, sans-serif';
   ctx.fillStyle = PALETTE.dim;
   ctx.fillText(`KILLS ${world.kills}`, FIELD.width - 20, 46);
+  // The equipped weapon, so the player always knows what they are firing.
+  const weaponLabel = WEAPON_NAMES[player.weapon] ?? 'PULSE';
+  const weaponSuffix = player.weapon === 'pulse' ? '' : ` Lv${player.weaponLevel}`;
+  const mineSuffix = player.mineLevel > 0 ? `  ·  MINES Lv${player.mineLevel} (${world.mines.length})` : '';
+  ctx.fillText(`WEAPON ${weaponLabel}${weaponSuffix}${mineSuffix}`, FIELD.width - 20, 66);
   // Combo meter, under the score.
   if (world.combo >= 2) {
     const width = 140;
@@ -757,10 +824,12 @@ export function drawGame(ctx, world, screen, ui = {}) {
   }
   drawArena(ctx, world);
   drawPickups(ctx, world);
+  drawMines(ctx, world);
   drawAimLines(ctx, world);
   for (const enemy of world.enemies) drawEnemy(ctx, enemy);
   drawGhosts(ctx, world);
   drawPlayer(ctx, world);
+  drawBeams(ctx, world);
   drawBullets(ctx, world);
   drawParticles(ctx, world, screen);
   drawRings(ctx, world);
