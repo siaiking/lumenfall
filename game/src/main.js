@@ -38,8 +38,9 @@ let hover = -1;
 let isNewBest = false;
 
 // A read-only handle for play-testing (and for the live browser's checks):
-// the world and the current screen, nothing that plays the game by itself.
-window.__lumenfall = { world, screen: () => screen };
+// the world, the current screen and the draft cards, nothing that plays the
+// game by itself.
+window.__lumenfall = { world, screen: () => screen, draft: () => draft };
 
 function saveBest() {
   try {

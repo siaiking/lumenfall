@@ -81,6 +81,20 @@ export const UPGRADES = [
     max: 3,
     apply: (player) => { player.nova += 1; },
   },
+  {
+    id: 'orbital-drone',
+    name: 'Orbital Drone',
+    desc: 'A drone circles you and shoots the Hollow',
+    max: 3,
+    apply: (player) => { player.drones += 1; },
+  },
+  {
+    id: 'ricochet-rounds',
+    name: 'Ricochet Rounds',
+    desc: 'Bullets bounce to a nearby enemy on hit',
+    max: 3,
+    apply: (player) => { player.ricochet += 1; },
+  },
 ];
 
 /** How many times the player already holds an upgrade. */

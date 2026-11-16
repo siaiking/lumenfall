@@ -4,8 +4,8 @@
 import { ENEMIES, WAVE } from './config.js';
 import { pick, range, shuffle } from './random.js';
 
-const COSTS = { drifter: 1, skitter: 1, spitter: 2, splitter: 2, brute: 4 };
-const UNLOCKS = { drifter: 1, skitter: 2, spitter: 3, splitter: 4, brute: 5 };
+const COSTS = { drifter: 1, skitter: 1, spitter: 2, splitter: 2, dasher: 2, brute: 4 };
+const UNLOCKS = { drifter: 1, skitter: 2, spitter: 3, splitter: 4, dasher: 3, brute: 5 };
 
 /** The point budget of a wave. */
 export function waveBudget(wave) {

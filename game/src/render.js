@@ -1,7 +1,7 @@
 // Lumenfall's renderer: every pixel the player (and the judge) sees — the
 // arena, the Warden, the Hollow, the HUD, and the title, draft, pause and
 // game-over screens. Drawing is pure: it reads the world, never mutates it.
-import { FIELD, PALETTE } from './config.js';
+import { DRONE, FIELD, PALETTE } from './config.js';
 import { clamp } from './random.js';
 
 export const SCREEN_TITLE = 'title';
@@ -37,6 +37,16 @@ function drawHeart(ctx, x, y, size, color) {
 function drawArena(ctx, world) {
   ctx.fillStyle = PALETTE.background;
   ctx.fillRect(0, 0, FIELD.width, FIELD.height);
+  // Parallax stars: they drift slowly with the clock, each at its own depth,
+  // and twinkle — the arena's dark is never flat black.
+  ctx.save();
+  for (const star of world.stars) {
+    const drifted = (star.x + world.time * 6 * star.depth) % FIELD.width;
+    ctx.globalAlpha = 0.25 + 0.45 * (0.5 + 0.5 * Math.sin(world.time * 2 + star.phase));
+    ctx.fillStyle = '#cdd7ff';
+    ctx.fillRect(drifted, star.y, star.size, star.size);
+  }
+  ctx.restore();
   ctx.strokeStyle = PALETTE.grid;
   ctx.lineWidth = 1;
   for (let x = 40; x < FIELD.width; x += 40) {
@@ -64,6 +74,17 @@ function drawArena(ctx, world) {
   glow.addColorStop(1, 'rgba(255, 183, 3, 0)');
   ctx.fillStyle = glow;
   ctx.fillRect(0, 0, FIELD.width, FIELD.height);
+  // Ambient embers drift up through the dark and wrap around the arena.
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  for (const ember of world.ambient) {
+    ctx.globalAlpha = 0.25 + 0.3 * (0.5 + 0.5 * Math.sin(world.time + ember.phase));
+    ctx.fillStyle = '#ff9f1c';
+    ctx.beginPath();
+    ctx.arc(ember.x, ember.y, ember.size, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
 }
 
 function drawPickups(ctx, world) {
@@ -78,10 +99,45 @@ function drawPickups(ctx, world) {
       ctx.translate(pickup.x, pickup.y);
       ctx.rotate(Math.PI / 4);
       ctx.fillRect(-5, -5, 10, 10);
-    } else {
+    } else if (pickup.kind === 'heart') {
       ctx.shadowColor = PALETTE.heart;
       ctx.shadowBlur = 12;
       drawHeart(ctx, pickup.x, pickup.y, 22, PALETTE.heart);
+    } else if (pickup.kind === 'shield') {
+      // A cyan hex-shield: one blocked hit, waiting to be taken.
+      ctx.strokeStyle = '#7ef0e0';
+      ctx.fillStyle = 'rgba(126, 240, 224, 0.25)';
+      ctx.shadowColor = '#7ef0e0';
+      ctx.shadowBlur = 12;
+      ctx.lineWidth = 2;
+      ctx.translate(pickup.x, pickup.y);
+      ctx.beginPath();
+      for (let index = 0; index < 6; index += 1) {
+        const angle = (index / 6) * Math.PI * 2 - Math.PI / 2;
+        const x = Math.cos(angle) * 11;
+        const y = Math.sin(angle) * 11;
+        if (index === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    } else if (pickup.kind === 'magnet') {
+      // An amber horseshoe magnet: eight seconds of triple pull.
+      ctx.strokeStyle = '#ff9f1c';
+      ctx.shadowColor = '#ff9f1c';
+      ctx.shadowBlur = 12;
+      ctx.lineWidth = 5;
+      ctx.translate(pickup.x, pickup.y);
+      ctx.beginPath();
+      ctx.arc(0, -2, 9, Math.PI, 0);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(-9, -2);
+      ctx.lineTo(-9, 6);
+      ctx.moveTo(9, -2);
+      ctx.lineTo(9, 6);
+      ctx.stroke();
     }
     ctx.restore();
   }
@@ -96,6 +152,21 @@ function drawEnemy(ctx, enemy) {
   ctx.shadowColor = enemy.color;
   ctx.shadowBlur = flash ? 18 : 10;
   const radius = enemy.radius;
+  // The dasher's telegraph: a flashing red lane along its charge line.
+  if (enemy.kind === 'dasher' && enemy.state === 'telegraph') {
+    const blink = 0.35 + 0.4 * Math.abs(Math.sin(enemy.wobble));
+    ctx.save();
+    ctx.rotate(enemy.angle);
+    ctx.strokeStyle = `rgba(255, 79, 67, ${blink})`;
+    ctx.lineWidth = 3;
+    ctx.setLineDash([10, 8]);
+    ctx.beginPath();
+    ctx.moveTo(radius, 0);
+    ctx.lineTo(280, 0);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
   if (enemy.kind === 'drifter') {
     ctx.beginPath();
     for (let index = 0; index < 8; index += 1) {
@@ -150,6 +221,16 @@ function drawEnemy(ctx, enemy) {
     ctx.arc(-radius * 0.35, 0, radius * 0.62, 0, Math.PI * 2);
     ctx.arc(radius * 0.35, 0, radius * 0.62, 0, Math.PI * 2);
     ctx.fill();
+  } else if (enemy.kind === 'dasher') {
+    // A dart, nose-first along its heading.
+    ctx.rotate(enemy.angle);
+    ctx.beginPath();
+    ctx.moveTo(radius * 1.25, 0);
+    ctx.lineTo(-radius * 0.8, radius * 0.8);
+    ctx.lineTo(-radius * 0.3, 0);
+    ctx.lineTo(-radius * 0.8, -radius * 0.8);
+    ctx.closePath();
+    ctx.fill();
   } else if (enemy.kind === 'boss') {
     ctx.beginPath();
     for (let index = 0; index < 10; index += 1) {
@@ -180,6 +261,24 @@ function drawEnemy(ctx, enemy) {
   }
   ctx.restore();
 
+  // Elites wear a gold ring and a star: bigger, tougher, richer.
+  if (enemy.elite) {
+    ctx.save();
+    ctx.strokeStyle = '#ffd166';
+    ctx.shadowColor = '#ffd166';
+    ctx.shadowBlur = 12;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(enemy.x, enemy.y, enemy.radius + 6, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.fillStyle = '#ffd166';
+    ctx.font = 'bold 11px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('★', enemy.x, enemy.y - enemy.radius - 20);
+    ctx.restore();
+  }
+
   if (enemy.kind !== 'boss' && enemy.hp < enemy.maxHp) {
     const width = enemy.radius * 2;
     ctx.fillStyle = 'rgba(0,0,0,0.55)';
@@ -187,6 +286,32 @@ function drawEnemy(ctx, enemy) {
     ctx.fillStyle = enemy.color;
     ctx.fillRect(enemy.x - width / 2, enemy.y - enemy.radius - 10, width * (enemy.hp / enemy.maxHp), 4);
   }
+}
+
+function drawGhosts(ctx, world) {
+  ctx.save();
+  for (const ghost of world.ghosts) {
+    ctx.globalAlpha = (ghost.life / ghost.maxLife) * 0.5;
+    ctx.fillStyle = PALETTE.player;
+    ctx.beginPath();
+    ctx.arc(ghost.x, ghost.y, 14, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawRings(ctx, world) {
+  ctx.save();
+  for (const ring of world.rings) {
+    const fraction = Math.max(0, ring.life / ring.maxLife);
+    ctx.globalAlpha = fraction * 0.9;
+    ctx.strokeStyle = ring.color;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(ring.x, ring.y, ring.radius, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.restore();
 }
 
 function drawPlayer(ctx, world) {
@@ -214,12 +339,53 @@ function drawPlayer(ctx, world) {
   ctx.arc(player.radius + 4, 0, 5, 0, Math.PI * 2);
   ctx.fill();
   if (player.muzzle > 0) {
+    // A four-point star flash at the lantern's mouth.
+    const mx = player.radius + 12;
     ctx.fillStyle = '#fff3b0';
     ctx.beginPath();
-    ctx.arc(player.radius + 12, 0, 8, 0, Math.PI * 2);
+    for (let point = 0; point < 8; point += 1) {
+      const angle = (point / 8) * Math.PI * 2;
+      const outer = point % 2 === 0 ? 11 : 4;
+      const x = mx + Math.cos(angle) * outer;
+      const y = Math.sin(angle) * outer;
+      if (point === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
     ctx.fill();
   }
   ctx.restore();
+
+  // A held shield rings the Warden in cyan.
+  if (player.shield > 0) {
+    ctx.save();
+    ctx.strokeStyle = 'rgba(126, 240, 224, 0.9)';
+    ctx.shadowColor = '#7ef0e0';
+    ctx.shadowBlur = 10;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(player.x, player.y, player.radius + 6, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+  // Orbital drones circle the Warden, each a bright amber bead.
+  for (let drone = 0; drone < player.drones; drone += 1) {
+    const orbit = player.droneAngle + (drone * Math.PI * 2) / player.drones;
+    const droneX = player.x + Math.cos(orbit) * DRONE.orbitRadius;
+    const droneY = player.y + Math.sin(orbit) * DRONE.orbitRadius;
+    ctx.save();
+    ctx.fillStyle = '#ffd166';
+    ctx.shadowColor = '#ffd166';
+    ctx.shadowBlur = 10;
+    ctx.beginPath();
+    ctx.arc(droneX, droneY, 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#7a5c00';
+    ctx.beginPath();
+    ctx.arc(droneX, droneY, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
 
   // Dash readiness, as a ring under the Warden.
   if (player.dashCooldown > 0) {
@@ -236,6 +402,16 @@ function drawBullets(ctx, world) {
   ctx.save();
   ctx.globalCompositeOperation = 'lighter';
   for (const bullet of world.bullets) {
+    // The trail: the bullet's last few steps, fading back.
+    if (bullet.trail.length > 1) {
+      ctx.strokeStyle = 'rgba(255, 230, 109, 0.35)';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(bullet.trail[0].x, bullet.trail[0].y);
+      for (const point of bullet.trail) ctx.lineTo(point.x, point.y);
+      ctx.lineTo(bullet.x, bullet.y);
+      ctx.stroke();
+    }
     ctx.fillStyle = PALETTE.bullet;
     ctx.shadowColor = PALETTE.bullet;
     ctx.shadowBlur = 10;
@@ -259,7 +435,7 @@ function drawBullets(ctx, world) {
   ctx.restore();
 }
 
-function drawParticles(ctx, world) {
+function drawParticles(ctx, world, screen) {
   ctx.save();
   ctx.globalCompositeOperation = 'lighter';
   for (const particle of world.particles) {
@@ -271,6 +447,9 @@ function drawParticles(ctx, world) {
     ctx.fill();
   }
   ctx.restore();
+  // Floating score text belongs to the fight: on the draft or game-over
+  // screens it would bleed through the overlay and clutter the panel.
+  if (screen !== SCREEN_PLAY) return;
   ctx.globalAlpha = 1;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
@@ -290,6 +469,27 @@ function drawHud(ctx, world) {
   // Health, top left.
   for (let index = 0; index < player.maxHp; index += 1) {
     drawHeart(ctx, 28 + index * 26, 28, 20, index < player.hp ? PALETTE.heart : 'rgba(255,93,143,0.25)');
+  }
+  // Shields and drones, as small marks beside the hearts.
+  const marksX = 28 + player.maxHp * 26;
+  for (let index = 0; index < player.shield; index += 1) {
+    ctx.strokeStyle = '#7ef0e0';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(marksX + index * 22, 28, 7, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  for (let index = 0; index < player.drones; index += 1) {
+    ctx.fillStyle = '#ffd166';
+    ctx.beginPath();
+    ctx.arc(marksX + player.shield * 22 + 12 + index * 16, 28, 4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  if (player.magnetTimer > 0) {
+    ctx.textAlign = 'left';
+    ctx.font = 'bold 12px system-ui, sans-serif';
+    ctx.fillStyle = '#ff9f1c';
+    ctx.fillText(`MAGNET ${Math.ceil(player.magnetTimer)}s`, 16, 52);
   }
   // Score and wave, top centre.
   ctx.textAlign = 'center';
@@ -413,9 +613,23 @@ function drawDraft(ctx, world, draft, hover) {
     ctx.fillStyle = PALETTE.text;
     ctx.font = 'bold 21px system-ui, sans-serif';
     ctx.fillText(upgrade.name, x + cardWidth / 2, y + 76);
+    // Long descriptions wrap to a second line instead of spilling past
+    // the card's edges.
     ctx.font = '15px system-ui, sans-serif';
     ctx.fillStyle = PALETTE.dim;
-    ctx.fillText(upgrade.desc, x + cardWidth / 2, y + 108);
+    if (upgrade.desc.length > 26) {
+      const words = upgrade.desc.split(' ');
+      let first = '';
+      let second = '';
+      for (const word of words) {
+        if ((first + word).length <= 22) first += (first ? ' ' : '') + word;
+        else second += (second ? ' ' : '') + word;
+      }
+      ctx.fillText(first, x + cardWidth / 2, y + 100);
+      ctx.fillText(second, x + cardWidth / 2, y + 122);
+    } else {
+      ctx.fillText(upgrade.desc, x + cardWidth / 2, y + 108);
+    }
     ctx.font = '13px system-ui, sans-serif';
     ctx.fillStyle = 'rgba(139, 147, 184, 0.7)';
     ctx.fillText(`Press ${index + 1} or click`, x + cardWidth / 2, y + 168);
@@ -485,9 +699,11 @@ export function drawGame(ctx, world, screen, ui = {}) {
   drawArena(ctx, world);
   drawPickups(ctx, world);
   for (const enemy of world.enemies) drawEnemy(ctx, enemy);
+  drawGhosts(ctx, world);
   drawPlayer(ctx, world);
   drawBullets(ctx, world);
-  drawParticles(ctx, world);
+  drawParticles(ctx, world, screen);
+  drawRings(ctx, world);
   ctx.restore();
 
   if (screen === SCREEN_PLAY || screen === SCREEN_DRAFT || screen === SCREEN_PAUSED) {
@@ -495,8 +711,28 @@ export function drawGame(ctx, world, screen, ui = {}) {
   }
   if (screen === SCREEN_PLAY) drawBanner(ctx, world);
   if (world.flash > 0) {
-    ctx.fillStyle = `rgba(255, 77, 109, ${world.flash * 0.5})`;
+    const flashRgb = world.flashColor === 'gold' ? '255, 209, 102' : '255, 77, 109';
+    ctx.fillStyle = `rgba(${flashRgb}, ${world.flash * 0.5})`;
     ctx.fillRect(0, 0, FIELD.width, FIELD.height);
+  }
+  // Low health: a red vignette pulses at the edges of the arena.
+  if (!world.over && world.player.hp > 0 && world.player.hp <= 2) {
+    const pulse = 0.1 + 0.06 * Math.sin(world.time * 4);
+    const vignette = ctx.createRadialGradient(
+      FIELD.width / 2, FIELD.height / 2, FIELD.height * 0.35,
+      FIELD.width / 2, FIELD.height / 2, FIELD.height * 0.75,
+    );
+    vignette.addColorStop(0, 'rgba(255, 46, 99, 0)');
+    vignette.addColorStop(1, `rgba(255, 46, 99, ${pulse})`);
+    ctx.fillStyle = vignette;
+    ctx.fillRect(0, 0, FIELD.width, FIELD.height);
+  }
+  // The Gloomlord's arrival: a blinking red frame while the warning lasts.
+  if (world.bossWarn > 0) {
+    const blink = 0.3 + 0.3 * Math.abs(Math.sin(world.time * 10));
+    ctx.strokeStyle = `rgba(255, 46, 99, ${blink})`;
+    ctx.lineWidth = 5;
+    ctx.strokeRect(2.5, 2.5, FIELD.width - 5, FIELD.height - 5);
   }
   if (screen === SCREEN_TITLE) drawTitle(ctx, world);
   if (screen === SCREEN_DRAFT) drawDraft(ctx, world, ui.draft ?? [], ui.hover ?? -1);

@@ -98,6 +98,11 @@ export class AudioEngine {
     this.noise({ duration: 0.14, volume: 0.14, frequency: 2400 });
   }
 
+  shield() {
+    this.tone({ frequency: 1046, type: 'sine', duration: 0.1, volume: 0.2 });
+    this.tone({ frequency: 1568, type: 'sine', duration: 0.16, volume: 0.16, when: 0.07 });
+  }
+
   waveHorn() {
     this.tone({ frequency: 196, type: 'triangle', duration: 0.4, volume: 0.22 });
     this.tone({ frequency: 294, type: 'triangle', duration: 0.4, volume: 0.2, when: 0.12 });

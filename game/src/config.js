@@ -49,8 +49,19 @@ export const ENEMIES = {
   spitter: { radius: 14, speed: 52, hp: 2, damage: 1, score: 20, color: '#ff7ab8', ember: 2 },
   brute: { radius: 26, speed: 34, hp: 14, damage: 2, score: 40, color: '#e07bff', ember: 4 },
   splitter: { radius: 17, speed: 78, hp: 4, damage: 1, score: 25, color: '#7dff9e', ember: 2 },
+  dasher: { radius: 12, speed: 96, hp: 2, damage: 1, score: 30, color: '#ff9f43', ember: 2 },
   boss: { radius: 46, speed: 40, hp: 220, damage: 2, score: 500, color: '#ff2e63', ember: 20 },
 };
+
+// Elite variants: from wave 3, a few of the Hollow arrive bigger, tougher and
+// richer. They roll per spawn, never for the boss.
+export const ELITE = { chance: 0.08, minWave: 3, hpMult: 2.5, radiusMult: 1.35, scoreMult: 2, emberMult: 2 };
+
+// The orbital drone an upgrade can grant: it circles the Warden and shoots.
+export const DRONE = { orbitRadius: 56, orbitSpeed: 3.4, fireInterval: 0.85, bulletSpeed: 520, damage: 1, range: 420 };
+
+// Combo milestones: reaching x3 or x5 once per run pays a bonus outright.
+export const COMBO_MILESTONES = { 3: 30, 5: 50 };
 
 // A wave is a budget of points spent on enemy kinds; the director buys the
 // strongest mix it can afford and trickles them in from the arena's edge.

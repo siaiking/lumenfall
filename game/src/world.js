@@ -2,7 +2,7 @@
 // particles, pickups, the combo, and the wave flow. It advances in fixed
 // 1/60 s steps and uses only its own seeded random source, so a screenshot
 // scene replays the same world from the same seed.
-import { COMBO_MAX, COMBO_WINDOW, ENEMIES, FIELD, PLAYER, STEP, WAVE } from './config.js';
+import { COMBO_MAX, COMBO_MILESTONES, COMBO_WINDOW, DRONE, ELITE, ENEMIES, FIELD, PLAYER, STEP, WAVE } from './config.js';
 import { clamp, makeRandom, range } from './random.js';
 import { enemyStats, isBossWave, spawnInterval, spawnPoint, waveComposition } from './waves.js';
 import { applyUpgrade } from './upgrades.js';
@@ -29,6 +29,13 @@ function makePlayer() {
     bulletLife: 0.9,
     projectiles: 1,
     pierce: 0,
+    ricochet: 0,
+    drones: 0,
+    droneAngle: 0,
+    droneFireTimer: 0,
+    shield: 0,
+    magnetTimer: 0,
+    ghostTimer: 0,
     dashTimer: 0,
     dashCooldown: 0,
     dashCooldownMax: PLAYER.dashCooldown,
@@ -60,6 +67,10 @@ export function createWorld(seed, best = 0) {
     bullets: [],
     enemyBullets: [],
     particles: [],
+    rings: [],
+    ghosts: [],
+    stars: [],
+    ambient: [],
     pickups: [],
     texts: [],
     spawnQueue: [],
@@ -68,10 +79,33 @@ export function createWorld(seed, best = 0) {
     shake: 0,
     hitStop: 0,
     flash: 0,
+    flashColor: 'red',
+    bossWarn: 0,
+    milestone: 0,
     banner: null,
     stats: { shots: 0, hits: 0, timePlayed: 0 },
     over: false,
   };
+  // A fixed backdrop, drawn from the world's own seed: parallax stars and
+  // slow-rising embers that make the arena feel alive behind the fight.
+  for (let index = 0; index < 80; index += 1) {
+    world.stars.push({
+      x: world.random() * FIELD.width,
+      y: world.random() * FIELD.height,
+      size: range(world.random, 0.6, 1.9),
+      depth: range(world.random, 0.15, 0.8),
+      phase: world.random() * Math.PI * 2,
+    });
+  }
+  for (let index = 0; index < 18; index += 1) {
+    world.ambient.push({
+      x: world.random() * FIELD.width,
+      y: world.random() * FIELD.height,
+      speed: range(world.random, 6, 16),
+      size: range(world.random, 1, 2.6),
+      phase: world.random() * Math.PI * 2,
+    });
+  }
   return world;
 }
 
@@ -107,6 +141,11 @@ export function startWave(world) {
     sub: isBossWave(world.wave) ? 'Something vast stirs in the dark' : `${world.spawnQueue.length} of the Hollow approach`,
     timer: 2.2,
   };
+  // The Gloomlord does not arrive quietly: a warning shake and a red edge.
+  if (isBossWave(world.wave)) {
+    world.bossWarn = 2.2;
+    world.shake = Math.max(world.shake, 12);
+  }
 }
 
 function burstParticles(world, x, y, color, count, speed, life, size) {
@@ -131,22 +170,29 @@ function addText(world, x, y, text, color, size = 14) {
   world.texts.push({ x, y, text, life: 0.9, maxLife: 0.9, color, size });
 }
 
-function spawnEnemy(world, kind, x, y) {
+/** An expanding shockwave ring: the visual punch of a big kill. */
+function pushRing(world, x, y, maxRadius, color, life = 0.45) {
+  world.rings.push({ x, y, radius: 8, maxRadius, life, maxLife: life, color });
+}
+
+function spawnEnemy(world, kind, x, y, allowElite = true) {
   const stats = enemyStats(kind, world.wave);
+  const elite = allowElite && kind !== 'boss' && world.wave >= ELITE.minWave && world.random() < ELITE.chance;
   world.enemies.push({
     kind,
     x,
     y,
     vx: 0,
     vy: 0,
-    hp: stats.hp,
-    maxHp: stats.hp,
-    radius: stats.radius,
+    hp: elite ? Math.round(stats.hp * ELITE.hpMult) : stats.hp,
+    maxHp: elite ? Math.round(stats.hp * ELITE.hpMult) : stats.hp,
+    radius: elite ? stats.radius * ELITE.radiusMult : stats.radius,
     speed: stats.speed,
     damage: stats.damage,
-    score: stats.score,
+    score: elite ? stats.score * ELITE.scoreMult : stats.score,
     color: stats.color,
-    ember: stats.ember,
+    ember: elite ? stats.ember * ELITE.emberMult : stats.ember,
+    elite,
     angle: 0,
     fireTimer: range(world.random, 1.2, 2.4),
     burstTimer: 3,
@@ -155,6 +201,12 @@ function spawnEnemy(world, kind, x, y) {
     flash: 0,
     knockX: 0,
     knockY: 0,
+    // The dasher's hunt: stalk in, telegraph the charge, then burst at the
+    // Warden along the line it locked when the telegraph ended.
+    state: 'stalk',
+    stateTimer: range(world.random, 0.8, 1.4),
+    chargeX: 0,
+    chargeY: 0,
   });
 }
 
@@ -177,23 +229,42 @@ function killEnemy(world, enemy, audio) {
   const gained = enemy.score * world.combo;
   world.score += gained;
   addText(world, enemy.x, enemy.y - enemy.radius, `+${gained}`, '#ffe66d', world.combo >= 3 ? 17 : 14);
-  burstParticles(world, enemy.x, enemy.y, enemy.color, enemy.kind === 'boss' ? 60 : 14, 260, 0.6, 4);
+  // Combo milestones pay out once per run: a gold popup, a bonus and embers.
+  const milestoneBonus = COMBO_MILESTONES[world.combo];
+  if (milestoneBonus !== undefined && world.milestone < world.combo) {
+    world.milestone = world.combo;
+    world.score += milestoneBonus;
+    addText(world, world.player.x, world.player.y - 40, `COMBO x${world.combo}! +${milestoneBonus}`, '#ffd166', 20);
+    for (let index = 0; index < 3; index += 1) {
+      dropPickup(world, world.player.x + range(world.random, -30, 30), world.player.y + range(world.random, -30, 30), 'ember');
+    }
+    audio?.draft();
+  }
+  burstParticles(world, enemy.x, enemy.y, enemy.color, enemy.kind === 'boss' ? 60 : enemy.elite ? 34 : 14, 260, 0.6, 4);
   burstParticles(world, enemy.x, enemy.y, '#ffffff', 6, 160, 0.35, 2.5);
+  if (enemy.kind === 'brute' || enemy.elite) {
+    pushRing(world, enemy.x, enemy.y, enemy.elite ? 110 : 80, enemy.color);
+  }
   for (let index = 0; index < enemy.ember; index += 1) {
     dropPickup(world, enemy.x + range(world.random, -14, 14), enemy.y + range(world.random, -14, 14), 'ember');
   }
   if (enemy.kind === 'brute' || enemy.kind === 'boss') {
     if (world.random() < 0.5) dropPickup(world, enemy.x, enemy.y, 'heart');
   }
+  // Elites always leave a shield behind; brutes sometimes leave a magnet.
+  if (enemy.elite) dropPickup(world, enemy.x, enemy.y, 'shield');
+  if (enemy.kind === 'brute' && world.random() < 0.3) dropPickup(world, enemy.x, enemy.y, 'magnet');
   if (enemy.kind === 'splitter') {
-    spawnEnemy(world, 'skitter', enemy.x - 12, enemy.y);
-    spawnEnemy(world, 'skitter', enemy.x + 12, enemy.y);
+    spawnEnemy(world, 'skitter', enemy.x - 12, enemy.y, false);
+    spawnEnemy(world, 'skitter', enemy.x + 12, enemy.y, false);
   }
   if (enemy.kind === 'brute') world.shake = Math.max(world.shake, 5);
   if (enemy.kind === 'boss') {
     world.shake = 14;
     world.hitStop = 0.12;
     world.flash = 0.35;
+    world.flashColor = 'red';
+    pushRing(world, enemy.x, enemy.y, 220, '#ff2e63', 0.7);
     world.banner = { text: 'THE GLOOMLORD FALLS', sub: `+${gained} — the light holds`, timer: 2.4 };
   }
   audio?.enemyDie();
@@ -202,10 +273,22 @@ function killEnemy(world, enemy, audio) {
 function damagePlayer(world, amount, audio) {
   const player = world.player;
   if (player.invulnerable > 0 || player.dashTimer > 0 || world.over) return;
+  // A shield takes the hit instead: no health lost, no combo lost, just a
+  // bright ring and the shield shattering.
+  if (player.shield > 0) {
+    player.shield -= 1;
+    player.invulnerable = 0.6;
+    pushRing(world, player.x, player.y, 70, '#7ef0e0');
+    burstParticles(world, player.x, player.y, '#7ef0e0', 16, 260, 0.5, 3);
+    addText(world, player.x, player.y - 28, 'SHIELD!', '#7ef0e0', 16);
+    audio?.shield();
+    return;
+  }
   player.hp -= amount;
   player.invulnerable = PLAYER.invulnerableTime;
   world.shake = Math.max(world.shake, 9);
   world.flash = 0.25;
+  world.flashColor = 'red';
   world.combo = 0;
   world.comboTimer = 0;
   burstParticles(world, player.x, player.y, '#ff4d6d', 18, 300, 0.6, 4);
@@ -234,9 +317,11 @@ function fireBullets(world, audio) {
       vy: Math.sin(angle) * player.bulletSpeed,
       damage: player.bulletDamage,
       pierce: player.pierce,
+      ricochet: player.ricochet,
       life: player.bulletLife,
       maxLife: player.bulletLife,
       radius: 4,
+      trail: [],
       hit: new Set(),
     });
   }
@@ -281,6 +366,9 @@ function updatePlayer(world, dt, input, audio) {
   if (player.invulnerable > 0) player.invulnerable -= dt;
   if (player.muzzle > 0) player.muzzle -= dt;
   if (player.novaCooldown > 0) player.novaCooldown -= dt;
+  if (player.magnetTimer > 0) player.magnetTimer -= dt;
+  if (player.droneFireTimer > 0) player.droneFireTimer -= dt;
+  if (player.drones > 0) player.droneAngle += DRONE.orbitSpeed * dt;
 
   const move = input.moveVector();
   const mouse = input.mouse();
@@ -307,6 +395,12 @@ function updatePlayer(world, dt, input, audio) {
     player.dashTimer -= dt;
     player.vx = player.dashX * PLAYER.dashSpeed;
     player.vy = player.dashY * PLAYER.dashSpeed;
+    // The dash leaves afterimages: a ghost every few steps, fading fast.
+    player.ghostTimer -= dt;
+    if (player.ghostTimer <= 0) {
+      player.ghostTimer = 0.03;
+      world.ghosts.push({ x: player.x, y: player.y, angle: player.angle, life: 0.28, maxLife: 0.28 });
+    }
   } else {
     player.vx = move.x * player.speed;
     player.vy = move.y * player.speed;
@@ -317,6 +411,45 @@ function updatePlayer(world, dt, input, audio) {
   if (input.firing() && player.fireTimer <= 0) {
     player.fireTimer = player.fireInterval;
     fireBullets(world, audio);
+  }
+
+  // Orbital drones: each one circles the Warden and, on its own beat,
+  // shoots the nearest Hollow in range.
+  if (player.drones > 0 && player.droneFireTimer <= 0 && world.enemies.length > 0) {
+    player.droneFireTimer = DRONE.fireInterval;
+    for (let drone = 0; drone < player.drones; drone += 1) {
+      const orbit = player.droneAngle + (drone * Math.PI * 2) / player.drones;
+      const droneX = player.x + Math.cos(orbit) * DRONE.orbitRadius;
+      const droneY = player.y + Math.sin(orbit) * DRONE.orbitRadius;
+      let target = null;
+      let targetDistance = DRONE.range;
+      for (const enemy of world.enemies) {
+        const distance = Math.hypot(enemy.x - droneX, enemy.y - droneY);
+        if (distance < targetDistance) {
+          targetDistance = distance;
+          target = enemy;
+        }
+      }
+      if (target) {
+        const angle = Math.atan2(target.y - droneY, target.x - droneX);
+        world.bullets.push({
+          x: droneX + Math.cos(angle) * 10,
+          y: droneY + Math.sin(angle) * 10,
+          vx: Math.cos(angle) * DRONE.bulletSpeed,
+          vy: Math.sin(angle) * DRONE.bulletSpeed,
+          damage: DRONE.damage,
+          pierce: 0,
+          ricochet: 0,
+          life: 0.8,
+          maxLife: 0.8,
+          radius: 3,
+          trail: [],
+          hit: new Set(),
+        });
+        world.stats.shots += 1;
+        audio?.shoot();
+      }
+    }
   }
 
   // The nova answers a crowd: three or more of the Hollow within reach set
@@ -386,6 +519,37 @@ function updateEnemies(world, dt, audio) {
         fireEnemyOrb(world, enemy);
         audio?.tone({ frequency: 340, end: 180, type: 'square', duration: 0.1, volume: 0.1 });
       }
+    } else if (enemy.kind === 'dasher') {
+      enemy.stateTimer -= dt;
+      if (enemy.state === 'stalk') {
+        // Creep in at half pace, sizing up the Warden.
+        enemy.vx = nx * enemy.speed * 0.55;
+        enemy.vy = ny * enemy.speed * 0.55;
+        if (enemy.stateTimer <= 0 && distance < 380) {
+          enemy.state = 'telegraph';
+          enemy.stateTimer = 0.55;
+          audio?.tone({ frequency: 880, end: 660, type: 'sine', duration: 0.12, volume: 0.1 });
+        }
+      } else if (enemy.state === 'telegraph') {
+        // Planted, shaking, lit up — the charge is coming.
+        enemy.vx = 0;
+        enemy.vy = 0;
+        enemy.wobble += dt * 30;
+        if (enemy.stateTimer <= 0) {
+          enemy.state = 'charge';
+          enemy.stateTimer = 0.45;
+          enemy.chargeX = nx;
+          enemy.chargeY = ny;
+        }
+      } else {
+        // The burst itself: fast, straight, and committed.
+        enemy.vx = enemy.chargeX * 520;
+        enemy.vy = enemy.chargeY * 520;
+        if (enemy.stateTimer <= 0) {
+          enemy.state = 'stalk';
+          enemy.stateTimer = range(world.random, 1.0, 1.6);
+        }
+      }
     } else if (enemy.kind === 'boss') {
       const enraged = enemy.hp < enemy.maxHp * 0.5;
       const speed = enemy.speed * (enraged ? 1.6 : 1);
@@ -436,6 +600,8 @@ function updateBullets(world, dt, audio) {
     bullet.life -= dt;
     bullet.x += bullet.vx * dt;
     bullet.y += bullet.vy * dt;
+    bullet.trail.push({ x: bullet.x, y: bullet.y });
+    if (bullet.trail.length > 6) bullet.trail.shift();
     let dead = bullet.life <= 0 || bullet.x < -20 || bullet.x > FIELD.width + 20 || bullet.y < -20 || bullet.y > FIELD.height + 20;
     if (!dead) {
       for (let enemyIndex = world.enemies.length - 1; enemyIndex >= 0; enemyIndex -= 1) {
@@ -458,6 +624,27 @@ function updateBullets(world, dt, audio) {
           }
           if (bullet.pierce > 0) {
             bullet.pierce -= 1;
+          } else if (bullet.ricochet > 0) {
+            // Bounce to the nearest other Hollow still in reach.
+            let target = null;
+            let targetDistance = 280;
+            for (const other of world.enemies) {
+              if (bullet.hit.has(other)) continue;
+              const otherDistance = Math.hypot(other.x - bullet.x, other.y - bullet.y);
+              if (otherDistance < targetDistance) {
+                targetDistance = otherDistance;
+                target = other;
+              }
+            }
+            if (target) {
+              bullet.ricochet -= 1;
+              const speed = Math.hypot(bullet.vx, bullet.vy) || PLAYER.bulletSpeed;
+              bullet.vx = ((target.x - bullet.x) / targetDistance) * speed;
+              bullet.vy = ((target.y - bullet.y) / targetDistance) * speed;
+              burstParticles(world, bullet.x, bullet.y, '#ffe66d', 3, 120, 0.25, 2);
+            } else {
+              dead = true;
+            }
           } else {
             dead = true;
           }
@@ -492,6 +679,25 @@ function updateParticles(world, dt) {
     particle.vy *= particle.drag;
     if (particle.life <= 0) world.particles.splice(index, 1);
   }
+  for (let index = world.rings.length - 1; index >= 0; index -= 1) {
+    const ring = world.rings[index];
+    ring.life -= dt;
+    ring.radius = ring.maxRadius * (1 - Math.max(0, ring.life) / ring.maxLife);
+    if (ring.life <= 0) world.rings.splice(index, 1);
+  }
+  for (let index = world.ghosts.length - 1; index >= 0; index -= 1) {
+    const ghost = world.ghosts[index];
+    ghost.life -= dt;
+    if (ghost.life <= 0) world.ghosts.splice(index, 1);
+  }
+  for (const ember of world.ambient) {
+    ember.y -= ember.speed * dt;
+    ember.x += Math.sin(world.time * 0.7 + ember.phase) * 6 * dt;
+    if (ember.y < -6) {
+      ember.y = FIELD.height + 6;
+      ember.x = world.random() * FIELD.width;
+    }
+  }
   for (let index = world.texts.length - 1; index >= 0; index -= 1) {
     const text = world.texts[index];
     text.life -= dt;
@@ -510,7 +716,9 @@ function updatePickups(world, dt, audio) {
     pickup.vx *= 0.9;
     pickup.vy *= 0.9;
     const distance = Math.hypot(player.x - pickup.x, player.y - pickup.y);
-    if (distance < player.magnetRadius) {
+    // A live magnet triples the pull radius while it lasts.
+    const pullRadius = player.magnetTimer > 0 ? player.magnetRadius * 3 : player.magnetRadius;
+    if (distance < pullRadius) {
       const pull = 420 * dt;
       pickup.x += ((player.x - pickup.x) / Math.max(1, distance)) * pull;
       pickup.y += ((player.y - pickup.y) / Math.max(1, distance)) * pull;
@@ -519,10 +727,18 @@ function updatePickups(world, dt, audio) {
       if (pickup.kind === 'ember') {
         world.score += pickup.value;
         audio?.pickup();
-      } else {
+      } else if (pickup.kind === 'heart') {
         player.hp = Math.min(player.maxHp, player.hp + pickup.value);
         addText(world, player.x, player.y - 24, '+1 HP', '#ff5d8f', 15);
         audio?.heal();
+      } else if (pickup.kind === 'shield') {
+        player.shield = Math.min(2, player.shield + pickup.value);
+        addText(world, player.x, player.y - 24, 'SHIELD UP', '#7ef0e0', 15);
+        audio?.shield();
+      } else if (pickup.kind === 'magnet') {
+        player.magnetTimer = 8;
+        addText(world, player.x, player.y - 24, 'MAGNET 8s', '#ff9f1c', 15);
+        audio?.pickup();
       }
       world.pickups.splice(index, 1);
     } else if (pickup.life <= 0) {
@@ -549,6 +765,7 @@ export function stepWorld(world, dt, input, audio) {
   }
   if (world.shake > 0) world.shake = Math.max(0, world.shake - dt * 26);
   if (world.flash > 0) world.flash = Math.max(0, world.flash - dt);
+  if (world.bossWarn > 0) world.bossWarn = Math.max(0, world.bossWarn - dt);
   if (world.banner && world.banner.timer > 0) world.banner.timer -= dt;
 
   // Trickle the wave's queue in from the edge, in groups that grow with the
@@ -580,6 +797,8 @@ export function stepWorld(world, dt, input, audio) {
     const bonus = 50 * world.wave;
     world.score += bonus;
     if (world.player.hp < world.player.maxHp) world.player.hp = Math.min(world.player.maxHp, world.player.hp + WAVE.clearHeal);
+    world.flash = 0.4;
+    world.flashColor = 'gold';
     world.banner = { text: `WAVE ${world.wave} CLEARED`, sub: `+${bonus} bonus`, timer: 1.6 };
     return EVENT_WAVE_CLEAR;
   }
