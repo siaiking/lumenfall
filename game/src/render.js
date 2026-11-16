@@ -68,11 +68,11 @@ function drawBackground(ctx, world) {
     // Parallax: the ring slides against the Warden's position, so the
     // arena reads deeper than a flat backdrop. 'lighter' because the
     // plate is black outside the ring — black adds nothing, so no keying
-    // pass is needed. Alpha 0.85 tames the bright metal at the bottom.
+    // pass is needed. Alpha 0.75 tames the bright metal at the bottom.
     const player = world.player;
     const offsetX = (player.x - FIELD.width / 2) * -0.13;
     const offsetY = (player.y - FIELD.height / 2) * -0.13;
-    drawCoverImage(ctx, ring, offsetX, offsetY, 0.85, 'lighter');
+    drawCoverImage(ctx, ring, offsetX, offsetY, 0.75, 'lighter');
   }
 }
 
