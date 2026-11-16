@@ -23,7 +23,19 @@ export const PALETTE = {
   hollow: '#b388ff',
   brute: '#e07bff',
   spitter: '#ff7ab8',
+  shooter: '#f72585',
   boss: '#ff2e63',
+};
+
+// The Gloomlord's attack modes: it rotates between them, announcing each
+// switch, so a boss fight has phases instead of one endless radial burst.
+export const BOSS = {
+  attackCycle: 6, // seconds in one mode before rotating to the next
+  ringCount: 16, // orbs in the gapped ring
+  ringGap: 2, // missing orbs in a row: the gap the Warden slips through
+  ringSpeed: 140,
+  summonCap: 8, // boss-summoned minions alive at once, at most
+  summonBatch: 3, // minions per summon
 };
 
 // The player: a Warden carrying the last lantern.
@@ -47,6 +59,7 @@ export const ENEMIES = {
   drifter: { radius: 15, speed: 62, hp: 3, damage: 1, score: 10, color: '#b388ff', ember: 1 },
   skitter: { radius: 10, speed: 148, hp: 1, damage: 1, score: 15, color: '#8ecbff', ember: 1 },
   spitter: { radius: 14, speed: 52, hp: 2, damage: 1, score: 20, color: '#ff7ab8', ember: 2 },
+  shooter: { radius: 13, speed: 58, hp: 3, damage: 1, score: 30, color: '#f72585', ember: 2 },
   brute: { radius: 26, speed: 34, hp: 14, damage: 2, score: 40, color: '#e07bff', ember: 4 },
   splitter: { radius: 17, speed: 78, hp: 4, damage: 1, score: 25, color: '#7dff9e', ember: 2 },
   dasher: { radius: 12, speed: 96, hp: 2, damage: 1, score: 30, color: '#ff9f43', ember: 2 },

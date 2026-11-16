@@ -2,10 +2,39 @@
 // they scale as the waves go on. A wave is a budget of points; the director
 // buys the strongest mix it can afford and trickles it in from the edge.
 import { ENEMIES, WAVE } from './config.js';
-import { pick, range, shuffle } from './random.js';
+import { range, shuffle } from './random.js';
 
-const COSTS = { drifter: 1, skitter: 1, spitter: 2, splitter: 2, dasher: 2, brute: 4 };
-const UNLOCKS = { drifter: 1, skitter: 2, spitter: 3, splitter: 4, dasher: 3, brute: 5 };
+const COSTS = { drifter: 1, skitter: 1, spitter: 2, shooter: 2, splitter: 2, dasher: 2, brute: 4 };
+const UNLOCKS = { drifter: 1, skitter: 2, spitter: 3, shooter: 3, splitter: 4, dasher: 3, brute: 5 };
+
+// The wave the shooter and the splitter first appear on; their share of the
+// director's picks ramps up from there, so they join the fight without
+// crowding out the Hollow the player already knows.
+const RAMP_START = { shooter: 3, splitter: 4 };
+
+/** A kind's pick weight on this wave: basics always 1, the newer kinds ramp
+ * from 0.3 at their debut wave toward 1.6 as the waves climb. */
+function kindWeight(kind, wave) {
+  const debut = RAMP_START[kind];
+  if (debut === undefined) return 1;
+  return Math.min(1.6, 0.3 + (wave - debut) * 0.3);
+}
+
+/** One kind from the list, weighted by kindWeight. */
+function weightedPick(random, kinds, wave) {
+  let total = 0;
+  const weights = kinds.map((kind) => {
+    const weight = kindWeight(kind, wave);
+    total += weight;
+    return weight;
+  });
+  let roll = random() * total;
+  for (let index = 0; index < kinds.length; index += 1) {
+    roll -= weights[index];
+    if (roll <= 0) return kinds[index];
+  }
+  return kinds[kinds.length - 1];
+}
 
 /** The point budget of a wave. */
 export function waveBudget(wave) {
@@ -37,16 +66,26 @@ export function waveComposition(wave, random) {
   while (budget > 0) {
     const affordable = kinds.filter((kind) => COSTS[kind] <= budget);
     if (affordable.length === 0) break;
-    const kind = pick(random, affordable);
+    const kind = weightedPick(random, affordable, wave);
     queue.push(kind);
     budget -= COSTS[kind];
   }
   // Heavier kinds first, then shuffle the tail so the wave never feels flat.
-  const heavy = queue.filter((kind) => COSTS[kind] >= 2);
-  const light = queue.filter((kind) => COSTS[kind] < 2);
+  // The boss has no cost (it is pushed, never bought), so it counts as the
+  // heaviest kind — otherwise both filters below would drop it and a boss
+  // wave would arrive with no Gloomlord at all.
+  const heavy = queue.filter((kind) => (COSTS[kind] ?? 99) >= 2);
+  const light = queue.filter((kind) => (COSTS[kind] ?? 99) < 2);
   shuffle(random, heavy);
   shuffle(random, light);
-  return [...heavy.slice(0, Math.ceil(heavy.length / 2)), ...light, ...heavy.slice(Math.ceil(heavy.length / 2))];
+  const ordered = [...heavy.slice(0, Math.ceil(heavy.length / 2)), ...light, ...heavy.slice(Math.ceil(heavy.length / 2))];
+  // The Gloomlord leads its wave: keep it first instead of shuffled in.
+  const bossIndex = ordered.indexOf('boss');
+  if (bossIndex > 0) {
+    ordered.splice(bossIndex, 1);
+    ordered.unshift('boss');
+  }
+  return ordered;
 }
 
 /** Seconds between spawns on this wave, tightening as the waves climb. */

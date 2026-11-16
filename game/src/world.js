@@ -2,7 +2,7 @@
 // particles, pickups, the combo, and the wave flow. It advances in fixed
 // 1/60 s steps and uses only its own seeded random source, so a screenshot
 // scene replays the same world from the same seed.
-import { COMBO_MAX, COMBO_MILESTONES, COMBO_WINDOW, DRONE, ELITE, ENEMIES, FIELD, PLAYER, STEP, WAVE } from './config.js';
+import { BOSS, COMBO_MAX, COMBO_MILESTONES, COMBO_WINDOW, DRONE, ELITE, ENEMIES, FIELD, PLAYER, STEP, WAVE } from './config.js';
 import { clamp, makeRandom, range } from './random.js';
 import { enemyStats, isBossWave, spawnInterval, spawnPoint, waveComposition } from './waves.js';
 import { applyUpgrade } from './upgrades.js';
@@ -175,10 +175,10 @@ function pushRing(world, x, y, maxRadius, color, life = 0.45) {
   world.rings.push({ x, y, radius: 8, maxRadius, life, maxLife: life, color });
 }
 
-function spawnEnemy(world, kind, x, y, allowElite = true) {
+function spawnEnemy(world, kind, x, y, allowElite = true, summoned = false) {
   const stats = enemyStats(kind, world.wave);
   const elite = allowElite && kind !== 'boss' && world.wave >= ELITE.minWave && world.random() < ELITE.chance;
-  world.enemies.push({
+  const enemy = {
     kind,
     x,
     y,
@@ -193,6 +193,8 @@ function spawnEnemy(world, kind, x, y, allowElite = true) {
     color: stats.color,
     ember: elite ? stats.ember * ELITE.emberMult : stats.ember,
     elite,
+    // True when the Gloomlord summoned this one: the summon cap counts them.
+    summoned,
     angle: 0,
     fireTimer: range(world.random, 1.2, 2.4),
     burstTimer: 3,
@@ -207,7 +209,16 @@ function spawnEnemy(world, kind, x, y, allowElite = true) {
     stateTimer: range(world.random, 0.8, 1.4),
     chargeX: 0,
     chargeY: 0,
-  });
+    // The shooter's burst: how many orbs are left in the volley, and the
+    // beat between them.
+    burstLeft: 0,
+    burstTick: 0,
+    // The Gloomlord's attack modes: 0 radial burst, 1 gapped ring, 2 summon.
+    modeIndex: 0,
+    modeTimer: BOSS.attackCycle,
+  };
+  world.enemies.push(enemy);
+  return enemy;
 }
 
 function dropPickup(world, x, y, kind) {
@@ -255,8 +266,14 @@ function killEnemy(world, enemy, audio) {
   if (enemy.elite) dropPickup(world, enemy.x, enemy.y, 'shield');
   if (enemy.kind === 'brute' && world.random() < 0.3) dropPickup(world, enemy.x, enemy.y, 'magnet');
   if (enemy.kind === 'splitter') {
-    spawnEnemy(world, 'skitter', enemy.x - 12, enemy.y, false);
-    spawnEnemy(world, 'skitter', enemy.x + 12, enemy.y, false);
+    // The split is the point: a green ring, a SPLIT! callout, and the two
+    // mites bursting apart so the player sees the threat double.
+    pushRing(world, enemy.x, enemy.y, 64, '#7dff9e', 0.5);
+    addText(world, enemy.x, enemy.y - enemy.radius - 8, 'SPLIT!', '#7dff9e', 15);
+    const left = spawnEnemy(world, 'skitter', enemy.x - 12, enemy.y, false);
+    const right = spawnEnemy(world, 'skitter', enemy.x + 12, enemy.y, false);
+    left.knockX = -140;
+    right.knockX = 140;
   }
   if (enemy.kind === 'brute') world.shake = Math.max(world.shake, 5);
   if (enemy.kind === 'boss') {
@@ -330,17 +347,18 @@ function fireBullets(world, audio) {
   audio?.shoot();
 }
 
-function fireEnemyOrb(world, enemy) {
+function fireEnemyOrb(world, enemy, speed = 185, spread = 0, color = '#ff4d8d') {
   const player = world.player;
-  const angle = Math.atan2(player.y - enemy.y, player.x - enemy.x);
+  const angle = Math.atan2(player.y - enemy.y, player.x - enemy.x) + spread;
   world.enemyBullets.push({
     x: enemy.x + Math.cos(angle) * (enemy.radius + 4),
     y: enemy.y + Math.sin(angle) * (enemy.radius + 4),
-    vx: Math.cos(angle) * 185,
-    vy: Math.sin(angle) * 185,
+    vx: Math.cos(angle) * speed,
+    vy: Math.sin(angle) * speed,
     damage: enemy.damage,
     life: 5,
     radius: 6,
+    color,
   });
 }
 
@@ -355,7 +373,55 @@ function radialBurst(world, enemy, count, speed) {
       damage: enemy.damage,
       life: 6,
       radius: 6,
+      color: '#ff4d8d',
     });
+  }
+}
+
+/**
+ * The Gloomlord's ring: a full circle of orbs with a gap of BOSS.ringGap
+ * missing in a row, so the Warden can slip through instead of only tanking
+ * it. The gap's position is random each ring.
+ */
+function gappedRing(world, enemy) {
+  const count = BOSS.ringCount;
+  const gapStart = Math.floor(world.random() * count);
+  for (let index = 0; index < count; index += 1) {
+    const offset = (index - gapStart + count) % count;
+    if (offset < BOSS.ringGap) continue;
+    const angle = (index / count) * Math.PI * 2;
+    world.enemyBullets.push({
+      x: enemy.x + Math.cos(angle) * (enemy.radius + 4),
+      y: enemy.y + Math.sin(angle) * (enemy.radius + 4),
+      vx: Math.cos(angle) * BOSS.ringSpeed,
+      vy: Math.sin(angle) * BOSS.ringSpeed,
+      damage: enemy.damage,
+      life: 6,
+      radius: 6,
+      color: '#ff4d8d',
+    });
+  }
+  pushRing(world, enemy.x, enemy.y, 110, '#ff2e63', 0.5);
+}
+
+/**
+ * The Gloomlord's summons: a batch of drifters and skitters, but never more
+ * than BOSS.summonCap of its minions alive at once — the arena stays
+ * readable no matter how long the fight runs.
+ */
+function summonMinions(world, enemy) {
+  let alive = 0;
+  for (const other of world.enemies) {
+    if (other.summoned) alive += 1;
+  }
+  const batch = Math.min(BOSS.summonBatch, Math.max(0, BOSS.summonCap - alive));
+  for (let count = 0; count < batch; count += 1) {
+    const kind = world.random() < 0.6 ? 'drifter' : 'skitter';
+    spawnEnemy(world, kind, enemy.x + range(world.random, -60, 60), enemy.y + range(world.random, -60, 60), false, true);
+  }
+  if (batch > 0) {
+    burstParticles(world, enemy.x, enemy.y, '#ff2e63', 18, 220, 0.5, 3);
+    addText(world, enemy.x, enemy.y - enemy.radius - 10, `SUMMON x${batch}`, '#ff8fa3', 15);
   }
 }
 
@@ -550,22 +616,93 @@ function updateEnemies(world, dt, audio) {
           enemy.stateTimer = range(world.random, 1.0, 1.6);
         }
       }
+    } else if (enemy.kind === 'shooter') {
+      // The ranged shooter: hold its ground at mid-range, plant its feet,
+      // draw a bead on the Warden (the renderer shows the aim line), then
+      // fire a three-round burst — fast enough to threaten, slow enough
+      // to sidestep.
+      enemy.stateTimer -= dt;
+      if (enemy.state === 'stalk') {
+        if (distance > 360) {
+          enemy.vx = nx * enemy.speed;
+          enemy.vy = ny * enemy.speed;
+        } else if (distance < 260) {
+          enemy.vx = -nx * enemy.speed * 0.8;
+          enemy.vy = -ny * enemy.speed * 0.8;
+        } else {
+          // Strafe around the Warden at firing range.
+          enemy.vx = -ny * enemy.speed * 0.5;
+          enemy.vy = nx * enemy.speed * 0.5;
+        }
+        if (enemy.stateTimer <= 0 && distance < 460) {
+          enemy.state = 'aim';
+          enemy.stateTimer = 0.7;
+          audio?.tone({ frequency: 520, end: 940, type: 'sine', duration: 0.15, volume: 0.08 });
+        }
+      } else if (enemy.state === 'aim') {
+        // Planted and aiming: the aim line is the warning.
+        enemy.vx = 0;
+        enemy.vy = 0;
+        if (enemy.stateTimer <= 0) {
+          enemy.state = 'fire';
+          enemy.stateTimer = 0.45;
+          enemy.burstLeft = 3;
+          enemy.burstTick = 0;
+        }
+      } else {
+        // The burst: one amber orb every 0.15 s, slight spread.
+        enemy.vx = 0;
+        enemy.vy = 0;
+        enemy.burstTick -= dt;
+        if (enemy.burstLeft > 0 && enemy.burstTick <= 0) {
+          enemy.burstTick = 0.15;
+          enemy.burstLeft -= 1;
+          const spread = (enemy.burstLeft - 1) * 0.12;
+          fireEnemyOrb(world, enemy, 230, spread, '#ffb703');
+          audio?.tone({ frequency: 420, end: 240, type: 'square', duration: 0.08, volume: 0.08 });
+        }
+        if (enemy.stateTimer <= 0) {
+          enemy.state = 'stalk';
+          enemy.stateTimer = range(world.random, 1.2, 2.0);
+        }
+      }
     } else if (enemy.kind === 'boss') {
       const enraged = enemy.hp < enemy.maxHp * 0.5;
       const speed = enemy.speed * (enraged ? 1.6 : 1);
       enemy.vx = nx * speed;
       enemy.vy = ny * speed;
-      enemy.burstTimer -= dt * (enraged ? 1.6 : 1);
-      enemy.summonTimer -= dt;
-      if (enemy.burstTimer <= 0) {
-        enemy.burstTimer = 4;
-        radialBurst(world, enemy, 10, 150);
+      // The Gloomlord rotates its attack every BOSS.attackCycle seconds:
+      // radial burst, then the gapped ring, then summoning minions — each
+      // switch announced, so the player can read the phase change.
+      enemy.modeTimer -= dt;
+      if (enemy.modeTimer <= 0) {
+        enemy.modeIndex = (enemy.modeIndex + 1) % 3;
+        enemy.modeTimer = BOSS.attackCycle;
+        enemy.burstTimer = 1.2;
+        enemy.summonTimer = 1.2;
+        const names = ['RADIAL BURST', 'THORN RING', 'CALL THE HOLLOW'];
+        addText(world, enemy.x, enemy.y - enemy.radius - 34, names[enemy.modeIndex], '#ff2e63', 18);
         audio?.bossRoar();
       }
-      if (enemy.summonTimer <= 0) {
-        enemy.summonTimer = 8;
-        for (let count = 0; count < 3; count += 1) {
-          spawnEnemy(world, 'drifter', enemy.x + range(world.random, -60, 60), enemy.y + range(world.random, -60, 60));
+      if (enemy.modeIndex === 0) {
+        enemy.burstTimer -= dt * (enraged ? 1.6 : 1);
+        if (enemy.burstTimer <= 0) {
+          enemy.burstTimer = 4;
+          radialBurst(world, enemy, 10, 150);
+          audio?.bossRoar();
+        }
+      } else if (enemy.modeIndex === 1) {
+        enemy.burstTimer -= dt * (enraged ? 1.4 : 1);
+        if (enemy.burstTimer <= 0) {
+          enemy.burstTimer = 3.2;
+          gappedRing(world, enemy);
+          audio?.bossRoar();
+        }
+      } else {
+        enemy.summonTimer -= dt * (enraged ? 1.4 : 1);
+        if (enemy.summonTimer <= 0) {
+          enemy.summonTimer = 6;
+          summonMinions(world, enemy);
         }
       }
     } else {

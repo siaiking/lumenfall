@@ -201,6 +201,27 @@ function drawEnemy(ctx, enemy) {
     ctx.beginPath();
     ctx.arc(radius * 0.3, 0, 3, 0, Math.PI * 2);
     ctx.fill();
+  } else if (enemy.kind === 'shooter') {
+    // A dart with a long barrel: this one shoots back. While it aims, the
+    // muzzle glows brighter as the shot readies.
+    ctx.rotate(enemy.angle);
+    ctx.fillRect(0, -3, radius * 1.3, 6);
+    ctx.beginPath();
+    ctx.moveTo(radius, 0);
+    ctx.lineTo(0, radius * 0.8);
+    ctx.lineTo(-radius, 0);
+    ctx.lineTo(0, -radius * 0.8);
+    ctx.closePath();
+    ctx.fill();
+    if (enemy.state === 'aim') {
+      const charge = clamp(1 - enemy.stateTimer / 0.7, 0, 1);
+      ctx.fillStyle = `rgba(255, 255, 255, ${0.4 + 0.6 * charge})`;
+      ctx.shadowColor = '#ffffff';
+      ctx.shadowBlur = 12;
+      ctx.beginPath();
+      ctx.arc(radius * 1.3, 0, 3 + 4 * charge, 0, Math.PI * 2);
+      ctx.fill();
+    }
   } else if (enemy.kind === 'brute') {
     ctx.beginPath();
     for (let index = 0; index < 6; index += 1) {
@@ -252,6 +273,17 @@ function drawEnemy(ctx, enemy) {
     ctx.arc(-radius * 0.3, -radius * 0.15, 5, 0, Math.PI * 2);
     ctx.arc(radius * 0.3, -radius * 0.15, 5, 0, Math.PI * 2);
     ctx.fill();
+    // Ring mode: a dashed circle warns that the next attack is the gapped
+    // ring, not a chase.
+    if (enemy.modeIndex === 1) {
+      ctx.strokeStyle = 'rgba(255, 46, 99, 0.75)';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([8, 8]);
+      ctx.beginPath();
+      ctx.arc(0, 0, radius + 16, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
     // The Gloomlord's health bar, always visible.
     const width = 120;
     ctx.fillStyle = 'rgba(0,0,0,0.55)';
@@ -286,6 +318,27 @@ function drawEnemy(ctx, enemy) {
     ctx.fillStyle = enemy.color;
     ctx.fillRect(enemy.x - width / 2, enemy.y - enemy.radius - 10, width * (enemy.hp / enemy.maxHp), 4);
   }
+}
+
+/** The shooter's aim line: a thin dashed lane from the shooter to the
+ * Warden while it aims, so the shot is never a surprise. */
+function drawAimLines(ctx, world) {
+  const player = world.player;
+  if (world.over) return;
+  ctx.save();
+  for (const enemy of world.enemies) {
+    if (enemy.kind !== 'shooter' || enemy.state !== 'aim') continue;
+    const charge = clamp(1 - enemy.stateTimer / 0.7, 0, 1);
+    ctx.strokeStyle = `rgba(247, 37, 133, ${0.35 + 0.45 * charge})`;
+    ctx.lineWidth = 2;
+    ctx.setLineDash([8, 6]);
+    ctx.beginPath();
+    ctx.moveTo(enemy.x, enemy.y);
+    ctx.lineTo(player.x, player.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  ctx.restore();
 }
 
 function drawGhosts(ctx, world) {
@@ -420,17 +473,23 @@ function drawBullets(ctx, world) {
     ctx.fill();
   }
   for (const orb of world.enemyBullets) {
-    ctx.fillStyle = '#ff4d8d';
-    ctx.shadowColor = '#ff4d8d';
+    // Shooter orbs are amber, boss and spitter orbs pink: the colour tells
+    // the player what fired it.
+    const color = orb.color ?? '#ff4d8d';
+    ctx.fillStyle = color;
+    ctx.shadowColor = color;
     ctx.shadowBlur = 12;
     ctx.beginPath();
     ctx.arc(orb.x, orb.y, orb.radius, 0, Math.PI * 2);
     ctx.fill();
-    ctx.strokeStyle = 'rgba(255, 77, 141, 0.5)';
+    ctx.save();
+    ctx.globalAlpha = 0.5;
+    ctx.strokeStyle = color;
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.arc(orb.x, orb.y, orb.radius + 4, 0, Math.PI * 2);
     ctx.stroke();
+    ctx.restore();
   }
   ctx.restore();
 }
@@ -698,6 +757,7 @@ export function drawGame(ctx, world, screen, ui = {}) {
   }
   drawArena(ctx, world);
   drawPickups(ctx, world);
+  drawAimLines(ctx, world);
   for (const enemy of world.enemies) drawEnemy(ctx, enemy);
   drawGhosts(ctx, world);
   drawPlayer(ctx, world);

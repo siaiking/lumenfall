@@ -116,9 +116,9 @@ export function stageShot(name, world, view) {
   }
   if (name === 'play') {
     // Play through to wave 3 (applying a draft pick at each clear, as a
-    // player would), then capture 10 s into it: spitters and splitters are
-    // on the field by then and the frame is dense, not a fresh wave's first
-    // trickle.
+    // player would), then capture 10 s into it: spitters, shooters and
+    // splitters are on the field by then and the frame is dense, not a
+    // fresh wave's first trickle.
     let event = 0;
     let guard = 0;
     while (world.wave < 3 && guard < 6) {
