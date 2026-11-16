@@ -2,7 +2,7 @@
 // arena, the Warden, the Hollow, the HUD, and the title, draft, pause and
 // game-over screens. Drawing is pure: it reads the world, never mutates it.
 import { DRONE, FIELD, PALETTE } from './config.js';
-import { drawSprite } from './sprites.js';
+import { backgroundImage, drawIcon, drawSprite } from './sprites.js';
 import { WEAPON_NAMES } from './upgrades.js';
 import { clamp } from './random.js';
 
@@ -36,9 +36,50 @@ function drawHeart(ctx, x, y, size, color) {
   ctx.restore();
 }
 
+/**
+ * Cover-fits a 16:9 plate into the 960x600 (16:10) field: scaled to cover,
+ * never stretched, with a 4% overscan so parallax offsets never expose an
+ * edge. A missing plate draws nothing — the caller guards with null.
+ */
+function drawCoverImage(ctx, img, offsetX, offsetY, alpha, composite) {
+  const scale = Math.max(FIELD.width / img.naturalWidth, FIELD.height / img.naturalHeight) * 1.04;
+  const w = img.naturalWidth * scale;
+  const h = img.naturalHeight * scale;
+  ctx.save();
+  if (composite) ctx.globalCompositeOperation = composite;
+  if (alpha !== 1) ctx.globalAlpha = alpha;
+  ctx.drawImage(img, (FIELD.width - w) / 2 + offsetX, (FIELD.height - h) / 2 + offsetY, w, h);
+  ctx.restore();
+}
+
+/** The arena's painted backdrop (v6 integration): the nebula is the floor,
+ * the ring floats above it. Both are optional — a failed load leaves the
+ * procedural arena exactly as it was. */
+function drawBackground(ctx, world) {
+  const nebula = backgroundImage('nebula');
+  if (nebula) {
+    // Slow drift, at most ~2.4 px/s, inside the overscan slack.
+    const driftX = Math.sin(world.time * 0.1) * 24;
+    const driftY = Math.cos(world.time * 0.07) * 8;
+    drawCoverImage(ctx, nebula, driftX, driftY, 1, null);
+  }
+  const ring = backgroundImage('ring');
+  if (ring) {
+    // Parallax: the ring slides against the Warden's position, so the
+    // arena reads deeper than a flat backdrop. 'lighter' because the
+    // plate is black outside the ring — black adds nothing, so no keying
+    // pass is needed. Alpha 0.85 tames the bright metal at the bottom.
+    const player = world.player;
+    const offsetX = (player.x - FIELD.width / 2) * -0.13;
+    const offsetY = (player.y - FIELD.height / 2) * -0.13;
+    drawCoverImage(ctx, ring, offsetX, offsetY, 0.85, 'lighter');
+  }
+}
+
 function drawArena(ctx, world) {
   ctx.fillStyle = PALETTE.background;
   ctx.fillRect(0, 0, FIELD.width, FIELD.height);
+  drawBackground(ctx, world);
   // Parallax stars: they drift slowly with the clock, each at its own depth,
   // and twinkle — the arena's dark is never flat black.
   ctx.save();
@@ -801,7 +842,7 @@ function drawDraft(ctx, world, draft, hover) {
   ctx.fillStyle = PALETTE.dim;
   ctx.fillText(`Wave ${world.wave} cleared — pick one card to carry into wave ${world.wave + 1}.`, FIELD.width / 2, 146);
   const cardWidth = 240;
-  const cardHeight = 200;
+  const cardHeight = 208;
   const gap = 28;
   const total = cardWidth * 3 + gap * 2;
   const startX = (FIELD.width - total) / 2;
@@ -817,10 +858,16 @@ function drawDraft(ctx, world, draft, hover) {
     ctx.stroke();
     ctx.fillStyle = PALETTE.lantern;
     ctx.font = 'bold 15px system-ui, sans-serif';
-    ctx.fillText(`LEVEL ${((world.player.upgrades[upgrade.id] ?? 0) + 1)}`, x + cardWidth / 2, y + 36);
+    ctx.fillText(`LEVEL ${((world.player.upgrades[upgrade.id] ?? 0) + 1)}`, x + cardWidth / 2, y + 30);
+    // The upgrade's icon, centred at the top of the card (64px slot).
+    // drawIcon crops to the glyph's content box, so thin art (a beam, a
+    // lantern) fills the slot instead of drowning in black margins. A
+    // missing icon draws nothing — the name and description still carry
+    // the card, exactly like the sprite fallbacks elsewhere.
+    drawIcon(ctx, `icon-${upgrade.id}`, x + cardWidth / 2, y + 74);
     ctx.fillStyle = PALETTE.text;
     ctx.font = 'bold 21px system-ui, sans-serif';
-    ctx.fillText(upgrade.name, x + cardWidth / 2, y + 76);
+    ctx.fillText(upgrade.name, x + cardWidth / 2, y + 126);
     // Long descriptions wrap to a second line instead of spilling past
     // the card's edges.
     ctx.font = '15px system-ui, sans-serif';
@@ -833,14 +880,14 @@ function drawDraft(ctx, world, draft, hover) {
         if ((first + word).length <= 22) first += (first ? ' ' : '') + word;
         else second += (second ? ' ' : '') + word;
       }
-      ctx.fillText(first, x + cardWidth / 2, y + 100);
-      ctx.fillText(second, x + cardWidth / 2, y + 122);
+      ctx.fillText(first, x + cardWidth / 2, y + 150);
+      ctx.fillText(second, x + cardWidth / 2, y + 170);
     } else {
-      ctx.fillText(upgrade.desc, x + cardWidth / 2, y + 108);
+      ctx.fillText(upgrade.desc, x + cardWidth / 2, y + 160);
     }
     ctx.font = '13px system-ui, sans-serif';
     ctx.fillStyle = 'rgba(139, 147, 184, 0.7)';
-    ctx.fillText(`Press ${index + 1} or click`, x + cardWidth / 2, y + 168);
+    ctx.fillText(`Press ${index + 1} or click`, x + cardWidth / 2, y + 192);
   });
   ctx.restore();
 }

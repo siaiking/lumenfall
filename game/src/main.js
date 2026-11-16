@@ -7,12 +7,12 @@ import { FIELD, STEP } from './config.js';
 import { Input } from './input.js';
 import { drawGame, SCREEN_DRAFT, SCREEN_OVER, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
 import { makeAutopilot, stageShot } from './shots.js';
-import { loadSprites } from './sprites.js';
+import { loadBackgrounds, loadSprites } from './sprites.js';
 import { applyDraftPick, beginRun, createWorld, EVENT_OVER, EVENT_WAVE_CLEAR, startWave, stepWorld, timeScale } from './world.js';
 import { rollDraft } from './upgrades.js';
 
 const BEST_KEY = 'lumenfall-best';
-const DRAFT_CARD = { width: 240, height: 200, gap: 28, y: 200 };
+const DRAFT_CARD = { width: 240, height: 208, gap: 28, y: 200 };
 
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
@@ -129,9 +129,10 @@ function gameOver() {
   status.textContent = `Game over. Score ${world.score}, wave ${world.wave}.`;
 }
 
-// Sprites load before the first frame in either mode, so a screenshot
-// never catches the procedural stand-ins; a failed load just falls back.
-await loadSprites();
+// Sprites and background plates load before the first frame in either
+// mode, so a screenshot never catches the procedural stand-ins; a failed
+// load just falls back.
+await Promise.all([loadSprites(), loadBackgrounds()]);
 
 if (shotName) {
   // Shot mode: one deterministic frame, then signal readiness.

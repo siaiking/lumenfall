@@ -19,6 +19,23 @@ const DEFS = {
   'enemy-bullet': { file: 'enemy-bullet.png', size: 26 },
   'pickup-shield': { file: 'pickup-shield.png', size: 44 },
   'pickup-magnet': { file: 'pickup-magnet.png', size: 44 },
+  // Draft-card icons (v6 integration): one per upgrade, same neon-on-black
+  // art, so they key out exactly like the sprites above.
+  'icon-heavy-rounds': { file: 'icon-heavy-rounds.png', size: 64 },
+  'icon-rapid-trigger': { file: 'icon-rapid-trigger.png', size: 64 },
+  'icon-split-shot': { file: 'icon-split-shot.png', size: 64 },
+  'icon-piercing': { file: 'icon-piercing.png', size: 64 },
+  'icon-swift-boots': { file: 'icon-swift-boots.png', size: 64 },
+  'icon-lantern-heart': { file: 'icon-lantern-heart.png', size: 64 },
+  'icon-quick-dash': { file: 'icon-quick-dash.png', size: 64 },
+  'icon-ember-magnet': { file: 'icon-ember-magnet.png', size: 64 },
+  'icon-long-barrel': { file: 'icon-long-barrel.png', size: 64 },
+  'icon-nova-burst': { file: 'icon-nova-burst.png', size: 64 },
+  'icon-orbital-drone': { file: 'icon-orbital-drone.png', size: 64 },
+  'icon-ricochet-rounds': { file: 'icon-ricochet-rounds.png', size: 64 },
+  'icon-scatter-shot': { file: 'icon-scatter-shot.png', size: 64 },
+  'icon-lance-beam': { file: 'icon-lance-beam.png', size: 64 },
+  'icon-mine-layer': { file: 'icon-mine-layer.png', size: 64 },
 };
 
 /** name -> { canvas, w, h } once loaded, null otherwise. */
@@ -40,6 +57,12 @@ export function loadSprites() {
       try {
         SPRITES[name] = { canvas: keyOut(img), w: def.size, h: 0 };
         SPRITES[name].h = (def.size * img.naturalHeight) / img.naturalWidth;
+        // Icons carry wide black margins in the source art (the visible
+        // glyph is 12–98px of a 128px canvas), so record the content box
+        // now — drawIcon() crops to it and the glyph fills its card slot.
+        if (name.startsWith('icon-')) {
+          SPRITES[name].box = contentBox(SPRITES[name].canvas);
+        }
       } catch {
         SPRITES[name] = null;
       }
@@ -49,6 +72,41 @@ export function loadSprites() {
     img.src = new URL(`../assets/${def.file}`, import.meta.url).href;
   }));
   return Promise.all(jobs).then(() => SPRITES);
+}
+
+/** Background plates: full-frame art, drawn raw — never keyed. The nebula
+ * must stay opaque (its dark areas are the arena's floor, not holes), and
+ * the ring is composited additively instead, so black adds nothing. */
+const BACKGROUNDS = {
+  nebula: { file: 'bg-nebula-far.jpg', img: null },
+  ring: { file: 'bg-ring-mid.jpg', img: null },
+};
+
+let backgroundsStarted = false;
+
+/** Loads both background plates once. Never rejects; a failed image just
+ * stays null and the renderer falls back to the procedural arena. */
+export function loadBackgrounds() {
+  if (backgroundsStarted) return Promise.resolve(BACKGROUNDS);
+  backgroundsStarted = true;
+  if (typeof Image === 'undefined' || typeof document === 'undefined') {
+    return Promise.resolve(BACKGROUNDS);
+  }
+  const jobs = Object.entries(BACKGROUNDS).map(([name, def]) => new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      def.img = img;
+      resolve();
+    };
+    img.onerror = () => resolve();
+    img.src = new URL(`../assets/${def.file}`, import.meta.url).href;
+  }));
+  return Promise.all(jobs).then(() => BACKGROUNDS);
+}
+
+/** The loaded background plate, or null when it failed / is not loaded. */
+export function backgroundImage(name) {
+  return BACKGROUNDS[name]?.img ?? null;
 }
 
 /** Neon-on-black keying: luminance becomes alpha, colour stays as-is. */
@@ -68,6 +126,30 @@ function keyOut(img) {
   return canvas;
 }
 
+/** The tight box around the keyed art's visible pixels, or null when the
+ * canvas is empty. Used to crop icons whose source art has wide black
+ * margins — without it a 6px-wide beam would stay 6px wide at any size. */
+function contentBox(canvas) {
+  const ctx = canvas.getContext('2d');
+  const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+  let minX = canvas.width;
+  let minY = canvas.height;
+  let maxX = -1;
+  let maxY = -1;
+  for (let y = 0; y < canvas.height; y += 1) {
+    for (let x = 0; x < canvas.width; x += 1) {
+      if (data[(y * canvas.width + x) * 4 + 3] > 0) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  if (maxX < 0) return null;
+  return { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 };
+}
+
 /**
  * Draws a loaded sprite centred at (x, y), rotated by `angle` (the art
  * faces right, so angle 0 points along +x). Returns false when the sprite
@@ -81,6 +163,26 @@ export function drawSprite(ctx, name, x, y, angle = 0, alpha = 1) {
   if (angle) ctx.rotate(angle);
   if (alpha !== 1) ctx.globalAlpha *= alpha;
   ctx.drawImage(sprite.canvas, -sprite.w / 2, -sprite.h / 2, sprite.w, sprite.h);
+  ctx.restore();
+  return true;
+}
+
+/**
+ * Draws an icon cropped to its visible content and scaled to fit `size`
+ * on its long side, centred at (cx, cy). A thin glyph (a 6px-wide beam)
+ * fills the slot instead of staying a hairline. Returns false when the
+ * icon is not loaded; falls back to the plain draw when no content box
+ * was recorded.
+ */
+export function drawIcon(ctx, name, cx, cy, size = 64) {
+  const sprite = SPRITES[name];
+  if (!sprite) return false;
+  if (!sprite.box) return drawSprite(ctx, name, cx, cy);
+  const { x, y, w, h } = sprite.box;
+  const scale = Math.min(size / w, size / h);
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.drawImage(sprite.canvas, x, y, w, h, (-w * scale) / 2, (-h * scale) / 2, w * scale, h * scale);
   ctx.restore();
   return true;
 }
