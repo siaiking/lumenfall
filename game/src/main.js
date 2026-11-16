@@ -8,7 +8,7 @@ import { Input } from './input.js';
 import { drawGame, SCREEN_DRAFT, SCREEN_OVER, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
 import { makeAutopilot, stageShot } from './shots.js';
 import { loadSprites } from './sprites.js';
-import { applyDraftPick, beginRun, createWorld, EVENT_OVER, EVENT_WAVE_CLEAR, startWave, stepWorld } from './world.js';
+import { applyDraftPick, beginRun, createWorld, EVENT_OVER, EVENT_WAVE_CLEAR, startWave, stepWorld, timeScale } from './world.js';
 import { rollDraft } from './upgrades.js';
 
 const BEST_KEY = 'lumenfall-best';
@@ -153,7 +153,11 @@ if (shotName) {
     requestAnimationFrame(frame);
     const delta = Math.min(0.1, (now - last) / 1000);
     last = now;
-    accumulator += delta;
+    // Boss-kill slow motion (v5): the active world runs at quarter speed
+    // while its slowMo timer counts down in real time.
+    const active = screen === SCREEN_TITLE ? demoWorld : world;
+    if (active.slowMo > 0) active.slowMo = Math.max(0, active.slowMo - delta);
+    accumulator += delta * timeScale(active);
 
     if (input.wasPressed('KeyM')) {
       audio.setMuted(!audio.muted);
@@ -180,6 +184,9 @@ if (shotName) {
           accumulator -= STEP;
           const event = stepWorld(world, STEP, input, audio);
           if (event === EVENT_WAVE_CLEAR) {
+            // A wave clear ends any slow motion still running: the draft
+            // screen should not reopen into quarter speed.
+            world.slowMo = 0;
             draft = rollDraft(world.random, world.player);
             screen = SCREEN_DRAFT;
             audio.draft();

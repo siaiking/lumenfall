@@ -2,7 +2,7 @@
 // particles, pickups, the combo, and the wave flow. It advances in fixed
 // 1/60 s steps and uses only its own seeded random source, so a screenshot
 // scene replays the same world from the same seed.
-import { BOSS, COMBO_MAX, COMBO_MILESTONES, COMBO_WINDOW, DRONE, ELITE, ENEMIES, FIELD, PLAYER, STEP, WAVE, WEAPONS } from './config.js';
+import { BOSS, COMBO_MAX, COMBO_MILESTONES, COMBO_WINDOW, DAMAGE_NUMBERS, DRONE, ELITE, ENEMIES, FIELD, PLAYER, SLOWMO, STEP, STREAK_CALLOUT_TIME, STREAK_TITLES, WAVE, WEAPONS } from './config.js';
 import { clamp, makeRandom, range } from './random.js';
 import { enemyStats, isBossWave, spawnInterval, spawnPoint, waveComposition } from './waves.js';
 import { applyUpgrade, synergyText, upgradeLevel } from './upgrades.js';
@@ -67,6 +67,11 @@ export function createWorld(seed, best = 0) {
     best,
     combo: 0,
     comboTimer: 0,
+    streak: 0,
+    streakBest: 0,
+    killCallout: null,
+    slowMo: 0,
+    damageNumbers: [],
     kills: 0,
     wave: 0,
     player: makePlayer(),
@@ -179,6 +184,29 @@ function addText(world, x, y, text, color, size = 14) {
   world.texts.push({ x, y, text, life: 0.9, maxLife: 0.9, color, size });
 }
 
+/**
+ * A floating damage number (v5): one small entry per hit, rising and
+ * fading fast. Capped — when the list is full the oldest number is
+ * dropped, so a dense fight stays cheap instead of growing a list.
+ */
+function addDamageNumber(world, x, y, amount, heavy) {
+  const shown = amount >= 1 ? String(Math.round(amount)) : amount.toFixed(1);
+  world.damageNumbers.push({
+    x,
+    y,
+    text: heavy ? `${shown}!` : shown,
+    heavy,
+    life: DAMAGE_NUMBERS.life,
+    maxLife: DAMAGE_NUMBERS.life,
+  });
+  if (world.damageNumbers.length > DAMAGE_NUMBERS.cap) world.damageNumbers.shift();
+}
+
+/** The simulation speed right now: slow motion while a boss kill plays out. */
+export function timeScale(world) {
+  return world.slowMo > 0 ? SLOWMO.scale : 1;
+}
+
 /** An expanding shockwave ring: the visual punch of a big kill. */
 function pushRing(world, x, y, maxRadius, color, life = 0.45) {
   world.rings.push({ x, y, radius: 8, maxRadius, life, maxLife: life, color });
@@ -246,6 +274,20 @@ function killEnemy(world, enemy, audio) {
   world.kills += 1;
   world.combo = Math.min(COMBO_MAX, world.combo + 1);
   world.comboTimer = COMBO_WINDOW;
+  // The kill streak (v5): kills since the last real hit. Hitting a title
+  // threshold raises a centre-screen callout with the streak count.
+  world.streak += 1;
+  world.streakBest = Math.max(world.streakBest, world.streak);
+  const title = STREAK_TITLES[world.streak];
+  if (title !== undefined) {
+    world.killCallout = {
+      text: title,
+      sub: `${world.streak} kills without a scratch`,
+      timer: STREAK_CALLOUT_TIME,
+      maxLife: STREAK_CALLOUT_TIME,
+    };
+    audio?.draft();
+  }
   const gained = enemy.score * world.combo;
   world.score += gained;
   addText(world, enemy.x, enemy.y - enemy.radius, `+${gained}`, '#ffe66d', world.combo >= 3 ? 17 : 14);
@@ -292,6 +334,9 @@ function killEnemy(world, enemy, audio) {
     world.flashColor = 'red';
     pushRing(world, enemy.x, enemy.y, 220, '#ff2e63', 0.7);
     world.banner = { text: 'THE GLOOMLORD FALLS', sub: `+${gained} — the light holds`, timer: 2.4 };
+    // Boss-kill slow motion (v5): a beat of quarter-speed so the kill
+    // lands, then the main loop's real-time countdown restores full speed.
+    world.slowMo = SLOWMO.duration;
   }
   audio?.enemyDie();
 }
@@ -317,6 +362,8 @@ function damagePlayer(world, amount, audio) {
   world.flashColor = 'red';
   world.combo = 0;
   world.comboTimer = 0;
+  // A real hit ends the kill streak (v5); a shield block above does not.
+  world.streak = 0;
   burstParticles(world, player.x, player.y, '#ff4d6d', 18, 300, 0.6, 4);
   audio?.hurt();
   if (player.hp <= 0) {
@@ -433,6 +480,7 @@ function fireLaser(world, audio) {
     enemy.flash = 0.12;
     enemy.knockX += dirX * 120;
     enemy.knockY += dirY * 120;
+    addDamageNumber(world, enemy.x, enemy.y - enemy.radius, damage, damage >= DAMAGE_NUMBERS.heavyAt);
     burstParticles(world, enemy.x, enemy.y, '#b8fff1', 5, 160, 0.3, 2.5);
     if (enemy.hp <= 0) {
       killEnemy(world, enemy, audio);
@@ -664,6 +712,7 @@ function updatePlayer(world, dt, input, audio) {
         if (distance < 190) {
           enemy.hp -= damage;
           enemy.flash = 0.12;
+          addDamageNumber(world, enemy.x, enemy.y - enemy.radius, damage, damage >= DAMAGE_NUMBERS.heavyAt);
           const push = 320 / Math.max(40, distance);
           enemy.knockX += ((enemy.x - player.x) / distance) * push;
           enemy.knockY += ((enemy.y - player.y) / distance) * push;
@@ -877,6 +926,7 @@ function updateBullets(world, dt, audio) {
           world.stats.hits += 1;
           enemy.hp -= bullet.damage;
           enemy.flash = 0.1;
+          addDamageNumber(world, enemy.x, enemy.y - enemy.radius, bullet.damage, bullet.damage >= DAMAGE_NUMBERS.heavyAt);
           const push = enemy.kind === 'brute' || enemy.kind === 'boss' ? 30 : 160;
           enemy.knockX += (bullet.vx / PLAYER.bulletSpeed) * push;
           enemy.knockY += (bullet.vy / PLAYER.bulletSpeed) * push;
@@ -967,6 +1017,7 @@ function updateMines(world, dt, audio) {
       if (distance > blastRadius + enemy.radius) continue;
       enemy.hp -= damage;
       enemy.flash = 0.12;
+      addDamageNumber(world, enemy.x, enemy.y - enemy.radius, damage, damage >= DAMAGE_NUMBERS.heavyAt);
       const push = 260 / Math.max(40, distance);
       enemy.knockX += ((enemy.x - mine.x) / Math.max(1, distance)) * push;
       enemy.knockY += ((enemy.y - mine.y) / Math.max(1, distance)) * push;
@@ -1014,6 +1065,13 @@ function updateParticles(world, dt) {
     text.y -= 34 * dt;
     if (text.life <= 0) world.texts.splice(index, 1);
   }
+  // Damage numbers rise a little faster than score text and die sooner.
+  for (let index = world.damageNumbers.length - 1; index >= 0; index -= 1) {
+    const number = world.damageNumbers[index];
+    number.life -= dt;
+    number.y -= 46 * dt;
+    if (number.life <= 0) world.damageNumbers.splice(index, 1);
+  }
   for (let index = world.beams.length - 1; index >= 0; index -= 1) {
     const beam = world.beams[index];
     beam.life -= dt;
@@ -1045,14 +1103,26 @@ function updatePickups(world, dt, audio) {
       } else if (pickup.kind === 'heart') {
         player.hp = Math.min(player.maxHp, player.hp + pickup.value);
         addText(world, player.x, player.y - 24, '+1 HP', '#ff5d8f', 15);
+        pushRing(world, player.x, player.y, 70, '#ff5d8f');
+        burstParticles(world, player.x, player.y, '#ff5d8f', 12, 220, 0.5, 3);
         audio?.heal();
       } else if (pickup.kind === 'shield') {
         player.shield = Math.min(2, player.shield + pickup.value);
         addText(world, player.x, player.y - 24, 'SHIELD UP', '#7ef0e0', 15);
+        // Pickup flash (v5): a cyan ring, a burst, and a brief full-screen
+        // tint so the grab reads even at the edge of the eye.
+        pushRing(world, player.x, player.y, 90, '#7ef0e0');
+        burstParticles(world, player.x, player.y, '#7ef0e0', 18, 260, 0.5, 3);
+        world.flash = 0.15;
+        world.flashColor = 'cyan';
         audio?.shield();
       } else if (pickup.kind === 'magnet') {
         player.magnetTimer = 8;
         addText(world, player.x, player.y - 24, 'MAGNET 8s', '#ff9f1c', 15);
+        pushRing(world, player.x, player.y, 90, '#ff9f1c');
+        burstParticles(world, player.x, player.y, '#ff9f1c', 18, 260, 0.5, 3);
+        world.flash = 0.15;
+        world.flashColor = 'amber';
         audio?.pickup();
       }
       world.pickups.splice(index, 1);
@@ -1082,6 +1152,7 @@ export function stepWorld(world, dt, input, audio) {
   if (world.flash > 0) world.flash = Math.max(0, world.flash - dt);
   if (world.bossWarn > 0) world.bossWarn = Math.max(0, world.bossWarn - dt);
   if (world.banner && world.banner.timer > 0) world.banner.timer -= dt;
+  if (world.killCallout && world.killCallout.timer > 0) world.killCallout.timer -= dt;
 
   // Trickle the wave's queue in from the edge, in groups that grow with the
   // wave: later waves arrive as a swarm, not a single file.

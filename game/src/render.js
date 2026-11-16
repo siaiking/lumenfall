@@ -617,6 +617,17 @@ function drawParticles(ctx, world, screen) {
     ctx.fillStyle = text.color;
     ctx.fillText(text.text, text.x, text.y);
   }
+  // Damage numbers (v5): small white hit values, gold and larger for heavy
+  // hits — drawn with a dark edge so they read over any sprite.
+  for (const number of world.damageNumbers) {
+    ctx.globalAlpha = clamp(number.life / number.maxLife, 0, 1);
+    ctx.font = `bold ${number.heavy ? 19 : 13}px system-ui, sans-serif`;
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.8)';
+    ctx.lineWidth = 3;
+    ctx.strokeText(number.text, number.x, number.y);
+    ctx.fillStyle = number.heavy ? '#ffd166' : '#ffffff';
+    ctx.fillText(number.text, number.x, number.y);
+  }
   ctx.globalAlpha = 1;
 }
 
@@ -686,11 +697,45 @@ function drawHud(ctx, world) {
     ctx.fillStyle = '#ffd166';
     ctx.fillText(`COMBO x${world.combo}`, FIELD.width / 2, 84);
   }
+  // Kill streak (v5): a live count under the combo, so the run toward the
+  // next title is always visible.
+  if (world.streak >= 2) {
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 12px system-ui, sans-serif';
+    ctx.fillStyle = '#ff9f1c';
+    ctx.fillText(`STREAK x${world.streak}`, FIELD.width / 2, world.combo >= 2 ? 100 : 84);
+  }
   // Controls hint, bottom left, faint.
   ctx.textAlign = 'left';
   ctx.font = '12px system-ui, sans-serif';
   ctx.fillStyle = 'rgba(139, 147, 184, 0.8)';
   ctx.fillText('WASD move · Mouse aim · Hold click to shoot · Shift dash · P pause · M mute', 16, FIELD.height - 14);
+  ctx.restore();
+}
+
+/** The kill-streak callout (v5): a big gold title centre-screen, fading in
+ * fast and out over its last half-second, with the streak count beneath. */
+function drawKillCallout(ctx, world) {
+  const callout = world.killCallout;
+  if (!callout || callout.timer <= 0) return;
+  const elapsed = callout.maxLife - callout.timer;
+  const alpha = clamp(Math.min(elapsed / 0.15, callout.timer / 0.5), 0, 1);
+  const scale = 1 + 0.25 * Math.max(0, 1 - elapsed / 0.18);
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.translate(FIELD.width / 2, FIELD.height / 2 - 130);
+  ctx.scale(scale, scale);
+  ctx.font = 'bold 36px system-ui, sans-serif';
+  ctx.fillStyle = '#ffd166';
+  ctx.shadowColor = '#ffb703';
+  ctx.shadowBlur = 22;
+  ctx.fillText(callout.text, 0, 0);
+  ctx.shadowBlur = 0;
+  ctx.font = '15px system-ui, sans-serif';
+  ctx.fillStyle = PALETTE.text;
+  ctx.fillText(callout.sub, 0, 30);
   ctx.restore();
 }
 
@@ -875,10 +920,28 @@ export function drawGame(ctx, world, screen, ui = {}) {
   if (screen === SCREEN_PLAY || screen === SCREEN_DRAFT || screen === SCREEN_PAUSED) {
     drawHud(ctx, world);
   }
-  if (screen === SCREEN_PLAY) drawBanner(ctx, world);
+  if (screen === SCREEN_PLAY) {
+    drawBanner(ctx, world);
+    drawKillCallout(ctx, world);
+  }
   if (world.flash > 0) {
-    const flashRgb = world.flashColor === 'gold' ? '255, 209, 102' : '255, 77, 109';
+    const flashRgb = world.flashColor === 'gold' ? '255, 209, 102'
+      : world.flashColor === 'cyan' ? '126, 240, 224'
+        : world.flashColor === 'amber' ? '255, 159, 28'
+          : '255, 77, 109';
     ctx.fillStyle = `rgba(${flashRgb}, ${world.flash * 0.5})`;
+    ctx.fillRect(0, 0, FIELD.width, FIELD.height);
+  }
+  // Boss-kill slow motion (v5): a pale vignette closes in while time runs
+  // at quarter speed, so the moment feels frozen, not just quiet.
+  if (world.slowMo > 0) {
+    const vignette = ctx.createRadialGradient(
+      FIELD.width / 2, FIELD.height / 2, FIELD.height * 0.3,
+      FIELD.width / 2, FIELD.height / 2, FIELD.height * 0.8,
+    );
+    vignette.addColorStop(0, 'rgba(255, 255, 255, 0)');
+    vignette.addColorStop(1, 'rgba(184, 255, 241, 0.28)');
+    ctx.fillStyle = vignette;
     ctx.fillRect(0, 0, FIELD.width, FIELD.height);
   }
   // Low health: a red vignette pulses at the edges of the arena.

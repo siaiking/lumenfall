@@ -100,5 +100,25 @@ export const WAVE = {
 export const COMBO_WINDOW = 2.5;
 export const COMBO_MAX = 5;
 
+// Kill-streak callouts (v5): consecutive kills without taking a hit earn a
+// title, announced centre-screen. The streak survives a shield block (the
+// shield took the hit, the Warden did not) and resets on real damage.
+export const STREAK_TITLES = {
+  3: 'TRIPLE THREAT',
+  5: 'RAMPAGE',
+  8: 'UNSTOPPABLE',
+  12: 'LIGHTBRINGER',
+  20: 'GODLIKE',
+};
+export const STREAK_CALLOUT_TIME = 1.6;
+
+// Boss-kill slow motion (v5): the world runs at this speed while slowMo
+// lasts (seconds of real time, counted down by the main loop).
+export const SLOWMO = { scale: 0.25, duration: 1.0 };
+
+// Damage numbers (v5): floating hit values, capped so a crowded fight
+// cannot grow the list without bound; the oldest number is dropped first.
+export const DAMAGE_NUMBERS = { cap: 48, life: 0.7, heavyAt: 3 };
+
 // Draft: after every cleared wave the player picks one of three cards.
 export const DRAFT_CHOICES = 3;

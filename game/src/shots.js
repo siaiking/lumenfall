@@ -154,6 +154,52 @@ export function stageShot(name, world, view) {
     simulate(world, view, 6, 'showcase');
     return { screen: SCREEN_PLAY, draft: null, best: world.best };
   }
+  if (name === 'bosskill') {
+    // The v5 boss-kill frame: wave 5, the Gloomlord on screen, then a
+    // point-blank killing bolt — the frame catches the slow-motion
+    // vignette, the fall banner, the ring and the burst mid-flight.
+    world.wave = 5;
+    startWave(world);
+    simulate(world, view, 6, 'showcase');
+    const boss = world.enemies.find((e) => e.kind === 'boss');
+    if (boss && !world.over) {
+      boss.hp = 1;
+      world.bullets.push({
+        x: boss.x, y: boss.y, vx: 0, vy: 0, damage: 5, pierce: 0, ricochet: 0,
+        life: 0.5, maxLife: 0.5, radius: 4, kind: 'bolt', color: '#ffe66d',
+        trailColor: 'rgba(255, 230, 109, 0.35)', trail: [], hit: new Set(),
+      });
+      const pilot = makeAutopilot(world, view, 'still');
+      stepWorld(world, SAMPLE, pilot, null);
+      // A few more steps so the streak callout fades in and the frame
+      // catches it mid-flight (the kill itself is one step old, so the
+      // callout would otherwise still be at ~10% opacity).
+      for (let i = 0; i < 12; i += 1) stepWorld(world, SAMPLE, pilot, null);
+    }
+    return { screen: SCREEN_PLAY, draft: null, best: world.best };
+  }
+  if (name === 'streak') {
+    // The v5 game-feel frame: ten seconds of skilled play, then the
+    // streak callout and a spray of damage numbers staged on the field —
+    // the frame shows what a hot run looks like mid-fight.
+    simulate(world, view, 10, 'skilled');
+    world.streak = 5;
+    world.streakBest = 5;
+    world.killCallout = {
+      text: 'RAMPAGE',
+      sub: '5 kills without a scratch',
+      timer: 1.4,
+      maxLife: 1.6,
+    };
+    for (const enemy of world.enemies.slice(0, 4)) {
+      world.damageNumbers.push({
+        x: enemy.x, y: enemy.y - enemy.radius - 6,
+        text: enemy.hp >= 3 ? '3!' : '1', heavy: enemy.hp >= 3,
+        life: 0.6, maxLife: 0.7,
+      });
+    }
+    return { screen: SCREEN_PLAY, draft: null, best: world.best };
+  }
   if (name !== 'play' && name !== 'draft' && name !== 'over') {
     simulate(world, view, START_SECONDS, 'skilled');
     return { screen: SCREEN_TITLE, draft: null, best: world.best };
