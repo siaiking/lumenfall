@@ -113,7 +113,7 @@ function drawFrame(drawWorld) {
   ctx.fillStyle = '#070a14';
   ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
   ctx.setTransform(deviceRatio * view.scale, 0, 0, deviceRatio * view.scale, deviceRatio * view.offsetX, deviceRatio * view.offsetY);
-  drawGame(ctx, drawWorld, screen, { draft, hover, isNewBest, meta, earned: lastEarned, shopHover });
+  drawGame(ctx, drawWorld, screen, { draft, hover, isNewBest, meta, earned: lastEarned, shopHover, muted: audio.muted });
 }
 
 function startGame() {
@@ -131,12 +131,17 @@ function startGame() {
 
 function pickDraft(index) {
   if (!draft || index < 0 || index >= draft.length) return;
-  applyDraftPick(world, draft[index]);
+  const synergy = applyDraftPick(world, draft[index]);
+  // A synergy landing gets its own arpeggio (v8), on top of the draft
+  // chime the wave clear already played.
+  if (synergy) audio.synergy();
   draft = null;
   world.wave += 1;
   startWave(world);
   screen = SCREEN_PLAY;
   audio.waveHorn();
+  // A mutated wave opens with a darker horn (v8) after the wave horn.
+  if (world.mutation) audio.mutationHorn();
 }
 
 function gameOver() {
@@ -254,7 +259,8 @@ if (shotName) {
             break;
           }
         }
-        audio.updateMusic(delta, world.wave);
+        audio.updateMusic(delta, world.wave, world.enemies.some((enemy) => enemy.kind === 'boss'));
+        audio.updateAmbient(delta, world.wave);
       }
       drawFrame(world);
     } else if (screen === SCREEN_DRAFT) {

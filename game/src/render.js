@@ -781,7 +781,7 @@ function drawParticles(ctx, world, screen) {
   ctx.globalAlpha = 1;
 }
 
-function drawHud(ctx, world) {
+function drawHud(ctx, world, ui = {}) {
   const player = world.player;
   ctx.save();
   ctx.textBaseline = 'middle';
@@ -868,6 +868,12 @@ function drawHud(ctx, world) {
   ctx.font = '12px system-ui, sans-serif';
   ctx.fillStyle = 'rgba(139, 147, 184, 0.8)';
   ctx.fillText('WASD move · Mouse aim · Hold click to shoot · Shift dash · P pause · M mute', 16, FIELD.height - 14);
+  // Sound state (v8), bottom right: always visible, so the player can
+  // tell at a glance whether M has silenced everything.
+  ctx.textAlign = 'right';
+  ctx.font = 'bold 12px system-ui, sans-serif';
+  ctx.fillStyle = ui.muted ? '#ff8fa3' : 'rgba(139, 147, 184, 0.8)';
+  ctx.fillText(ui.muted ? '🔇 MUTED — PRESS M' : '♪ SOUND ON — M TO MUTE', FIELD.width - 16, FIELD.height - 14);
   ctx.restore();
 }
 
@@ -968,6 +974,11 @@ function drawTitle(ctx, world, ui = {}) {
   ctx.font = 'bold 17px system-ui, sans-serif';
   ctx.fillStyle = '#ffe9a8';
   ctx.fillText('◆  SHOP  —  PRESS S', button.x + button.width / 2, button.y + button.height / 2 + 1);
+  // Sound state (v8): the title is quiet until the first gesture, and
+  // the line below says so — and says what M does once sound is live.
+  ctx.font = '14px system-ui, sans-serif';
+  ctx.fillStyle = ui.muted ? '#ff8fa3' : PALETTE.dim;
+  ctx.fillText(ui.muted ? '🔇 SOUND MUTED — PRESS M TO UNMUTE' : '♪ SOUND ON — PRESS M TO MUTE', FIELD.width / 2, 508);
   ctx.restore();
 }
 
@@ -1197,7 +1208,7 @@ export function drawGame(ctx, world, screen, ui = {}) {
   ctx.restore();
 
   if (screen === SCREEN_PLAY || screen === SCREEN_DRAFT || screen === SCREEN_PAUSED) {
-    drawHud(ctx, world);
+    drawHud(ctx, world, ui);
   }
   if (screen === SCREEN_PLAY) {
     drawBanner(ctx, world);

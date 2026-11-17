@@ -258,7 +258,7 @@ function pushRing(world, x, y, maxRadius, color, life = 0.45) {
   world.rings.push({ x, y, radius: 8, maxRadius, life, maxLife: life, color });
 }
 
-function spawnEnemy(world, kind, x, y, allowElite = true, summoned = false) {
+function spawnEnemy(world, kind, x, y, allowElite = true, summoned = false, audio = null) {
   const stats = enemyStats(kind, world.wave, world.mutation);
   const elite = allowElite && kind !== 'boss' && world.wave >= ELITE.minWave
     && world.random() < eliteChance(world.wave, world.mutation);
@@ -302,6 +302,9 @@ function spawnEnemy(world, kind, x, y, allowElite = true, summoned = false) {
     modeTimer: BOSS.attackCycle,
   };
   world.enemies.push(enemy);
+  // An elite arrives with a chime (v8): gold is worth hearing as well as
+  // seeing, so the player looks up when one joins the fight.
+  if (enemy.elite) audio?.eliteSpawn();
   return enemy;
 }
 
@@ -368,8 +371,8 @@ function killEnemy(world, enemy, audio) {
     // mites bursting apart so the player sees the threat double.
     pushRing(world, enemy.x, enemy.y, 64, '#7dff9e', 0.5);
     addText(world, enemy.x, enemy.y - enemy.radius - 8, 'SPLIT!', '#7dff9e', 15);
-    const left = spawnEnemy(world, 'skitter', enemy.x - 12, enemy.y, false);
-    const right = spawnEnemy(world, 'skitter', enemy.x + 12, enemy.y, false);
+    const left = spawnEnemy(world, 'skitter', enemy.x - 12, enemy.y, false, false, audio);
+    const right = spawnEnemy(world, 'skitter', enemy.x + 12, enemy.y, false, false, audio);
     left.knockX = -140;
     right.knockX = 140;
   }
@@ -381,6 +384,9 @@ function killEnemy(world, enemy, audio) {
     world.flashColor = 'red';
     pushRing(world, enemy.x, enemy.y, 220, '#ff2e63', 0.7);
     world.banner = { text: 'THE GLOOMLORD FALLS', sub: `+${gained} — the light holds`, timer: 2.4 };
+    // The fall gets its own chord (v8) under the kill noise, and the boss
+    // music layer drops back to the ordinary line on the next frame.
+    audio?.bossDown();
     // Boss-kill slow motion (v5): a beat of quarter-speed so the kill
     // lands, then the main loop's real-time countdown restores full speed.
     world.slowMo = SLOWMO.duration;
@@ -601,7 +607,7 @@ function gappedRing(world, enemy) {
  * than BOSS.summonCap of its minions alive at once — the arena stays
  * readable no matter how long the fight runs.
  */
-function summonMinions(world, enemy) {
+function summonMinions(world, enemy, audio = null) {
   let alive = 0;
   for (const other of world.enemies) {
     if (other.summoned) alive += 1;
@@ -609,11 +615,14 @@ function summonMinions(world, enemy) {
   const batch = Math.min(BOSS.summonBatch, Math.max(0, BOSS.summonCap - alive));
   for (let count = 0; count < batch; count += 1) {
     const kind = world.random() < 0.6 ? 'drifter' : 'skitter';
-    spawnEnemy(world, kind, enemy.x + range(world.random, -60, 60), enemy.y + range(world.random, -60, 60), false, true);
+    spawnEnemy(world, kind, enemy.x + range(world.random, -60, 60), enemy.y + range(world.random, -60, 60), false, true, audio);
   }
   if (batch > 0) {
     burstParticles(world, enemy.x, enemy.y, '#ff2e63', 18, 220, 0.5, 3);
     addText(world, enemy.x, enemy.y - enemy.radius - 10, `SUMMON x${batch}`, '#ff8fa3', 15);
+    // The summons arrive with a low pulse (v8), distinct from the roar
+    // that announces the attack-mode switch.
+    audio?.bossSummon();
   }
 }
 
@@ -925,7 +934,7 @@ function updateEnemies(world, dt, audio) {
         enemy.summonTimer -= dt * (enraged ? 1.4 : 1);
         if (enemy.summonTimer <= 0) {
           enemy.summonTimer = 6;
-          summonMinions(world, enemy);
+          summonMinions(world, enemy, audio);
         }
       }
     } else {
@@ -1126,6 +1135,9 @@ function updateHazards(world, dt, audio) {
     if (overlap > 0 && player.dashTimer <= 0) {
       const before = player.hp;
       damagePlayer(world, HAZARDS.obstacle.damage, audio);
+      // A boulder crush lands with a thud (v8) — but only when it really
+      // hurt; a shield block or a dash-through stays quiet.
+      if (player.hp < before) audio?.boulderHit();
       // Shove the Warden clear so the boulder cannot grind a second hit
       // out of the same touch.
       const pushX = distance > 0 ? (player.x - obstacle.x) / distance : 1;
@@ -1162,6 +1174,8 @@ function updateHazards(world, dt, audio) {
       zone.timer = HAZARDS.zone.active;
       zone.tickTimer = HAZARDS.zone.tick;
       pushRing(world, zone.x, zone.y, zone.radius, '#ff4d6d', 0.4);
+      // The floor catches with a crackle (v8) as the warning ends.
+      audio?.zoneIgnite();
     }
     if (zone.state === 'active') {
       zone.tickTimer -= dt;
@@ -1207,6 +1221,9 @@ function updateHazards(world, dt, audio) {
         warnMax: MUTATIONS.meteor.warn,
         blast: MUTATIONS.meteor.blast,
       });
+      // The warning ring arrives with a falling whistle (v8): the ring
+      // shows where, the whistle says when to move.
+      audio?.meteorWarn();
     }
   }
   for (let index = world.meteors.length - 1; index >= 0; index -= 1) {
@@ -1219,7 +1236,7 @@ function updateHazards(world, dt, audio) {
     burstParticles(world, meteor.x, meteor.y, '#ffffff', 8, 220, 0.35, 2.5);
     pushRing(world, meteor.x, meteor.y, meteor.blast, '#ff9f1c', 0.5);
     world.shake = Math.max(world.shake, 6);
-    audio?.noise({ duration: 0.25, volume: 0.25, frequency: 500 });
+    audio?.meteorImpact();
     if (Math.hypot(player.x - meteor.x, player.y - meteor.y) < meteor.blast + player.radius) {
       damagePlayer(world, MUTATIONS.meteor.playerDamage, audio);
     }
@@ -1373,7 +1390,7 @@ export function stepWorld(world, dt, input, audio) {
       for (let count = 0; count < group && world.spawnQueue.length > 0; count += 1) {
         const kind = world.spawnQueue.shift();
         const point = spawnPoint(world.random, world.player);
-        spawnEnemy(world, kind, point.x, point.y);
+        spawnEnemy(world, kind, point.x, point.y, true, false, audio);
       }
     }
   }
@@ -1404,7 +1421,8 @@ export function stepWorld(world, dt, input, audio) {
   return EVENT_NONE;
 }
 
-/** Applies a drafted card to the player. */
+/** Applies a drafted card to the player. Returns the synergy callout text
+ * when the pick combos with an upgrade already held, or null. */
 export function applyDraftPick(world, upgrade) {
   applyUpgrade(world.player, upgrade);
   // A synergy landing gets a gold callout above the Warden, so the combo
@@ -1413,6 +1431,7 @@ export function applyDraftPick(world, upgrade) {
   if (synergy) {
     addText(world, world.player.x, world.player.y - 40, synergy, '#ffd166', 17);
   }
+  return synergy;
 }
 
 /** The enemy kinds on the field, for the HUD's remaining count. */
