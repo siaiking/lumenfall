@@ -19,6 +19,13 @@ const DEFS = {
   'enemy-bullet': { file: 'enemy-bullet.png', size: 26 },
   'pickup-shield': { file: 'pickup-shield.png', size: 44 },
   'pickup-magnet': { file: 'pickup-magnet.png', size: 44 },
+  // Arena hazards (v7.5): the drifting boulder and the falling meteor,
+  // same neon-on-black art as the other sprites. The meteor art's ember
+  // trail points down in the file, so the renderer draws it rotated PI.
+  boulder: { file: 'boulder.png', size: 64 },
+  meteor: { file: 'meteor.png', size: 30 },
+  // Shop header emblem (v7.5): a small golden lantern above the title.
+  lantern: { file: 'lantern.png', size: 36 },
   // Draft-card icons (v6 integration): one per upgrade, same neon-on-black
   // art, so they key out exactly like the sprites above.
   'icon-heavy-rounds': { file: 'icon-heavy-rounds.png', size: 64 },
@@ -80,11 +87,14 @@ export function loadSprites() {
 const BACKGROUNDS = {
   nebula: { file: 'bg-nebula-far.jpg', img: null },
   ring: { file: 'bg-ring-mid.jpg', img: null },
+  // Title-screen hero plate (v7.5): the title draws this instead of the
+  // arena backdrop, so the two never fight. Drawn raw, never keyed.
+  hero: { file: 'bg-hero.jpg', img: null },
 };
 
 let backgroundsStarted = false;
 
-/** Loads both background plates once. Never rejects; a failed image just
+/** Loads the background plates once. Never rejects; a failed image just
  * stays null and the renderer falls back to the procedural arena. */
 export function loadBackgrounds() {
   if (backgroundsStarted) return Promise.resolve(BACKGROUNDS);

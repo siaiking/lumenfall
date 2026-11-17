@@ -602,6 +602,9 @@ function drawHazards(ctx, world) {
     }
   }
   for (const obstacle of world.obstacles) {
+    // v7.5: the boulder sprite first — the procedural rock below is the
+    // fallback when the sprite is not loaded.
+    if (drawSprite(ctx, 'boulder', obstacle.x, obstacle.y)) continue;
     // A dark boulder with a cold rim and crater pits: solid cover that
     // swallows shots and hurts to touch.
     ctx.save();
@@ -648,6 +651,9 @@ function drawHazards(ctx, world) {
     ctx.moveTo(meteor.x, rockY - 14);
     ctx.lineTo(meteor.x, meteor.y);
     ctx.stroke();
+    // v7.5: the meteor sprite, flipped PI so its ember trail points up
+    // (behind the fall) — the procedural rock is the fallback.
+    if (drawSprite(ctx, 'meteor', meteor.x, rockY, Math.PI)) continue;
     ctx.save();
     ctx.translate(meteor.x, rockY);
     ctx.fillStyle = '#2a1a12';
@@ -912,6 +918,12 @@ function drawBanner(ctx, world) {
 
 function drawTitle(ctx, world, ui = {}) {
   ctx.save();
+  // v7.5: the hero plate is the title screen's own backdrop — drawn here
+  // instead of the arena, so the title art and the in-game backgrounds
+  // never fight. The dark overlay below keeps the text readable; a
+  // missing plate falls back to the arena exactly as before.
+  const hero = backgroundImage('hero');
+  if (hero) drawCoverImage(ctx, hero, 0, 0, 1, null);
   ctx.fillStyle = 'rgba(7, 10, 20, 0.72)';
   ctx.fillRect(0, 0, FIELD.width, FIELD.height);
   ctx.textAlign = 'center';
@@ -938,7 +950,7 @@ function drawTitle(ctx, world, ui = {}) {
   ctx.font = 'bold 18px system-ui, sans-serif';
   ctx.fillStyle = '#ffd166';
   ctx.fillText(`◆  LUMEN  ${balance}`, FIELD.width / 2, 368);
-  const pulse = 0.6 + 0.4 * Math.sin(world.time * 3);
+  const pulse = 0.8 + 0.2 * Math.sin(world.time * 3);
   ctx.globalAlpha = pulse;
   ctx.font = 'bold 24px system-ui, sans-serif';
   ctx.fillStyle = PALETTE.player;
@@ -969,6 +981,8 @@ function drawShop(ctx, meta, hover) {
   ctx.save();
   ctx.fillStyle = 'rgba(7, 10, 20, 0.82)';
   ctx.fillRect(0, 0, FIELD.width, FIELD.height);
+  // v7.5: a small lantern emblem above the title — the shop's namesake.
+  drawSprite(ctx, 'lantern', FIELD.width / 2, 36);
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.font = 'bold 34px system-ui, sans-serif';
@@ -1136,7 +1150,7 @@ function drawOver(ctx, world, isNewBest, earned = 0) {
     ctx.fillStyle = '#ffd166';
     ctx.fillText(`+${earned}  ◆  LUMEN EARNED`, FIELD.width / 2, 352);
   }
-  const pulse = 0.6 + 0.4 * Math.sin(world.time * 3);
+  const pulse = 0.8 + 0.2 * Math.sin(world.time * 3);
   ctx.globalAlpha = pulse;
   ctx.font = 'bold 22px system-ui, sans-serif';
   ctx.fillStyle = PALETTE.player;
