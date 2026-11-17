@@ -2,6 +2,7 @@
 // arena, the Warden, the Hollow, the HUD, and the title, draft, pause and
 // game-over screens. Drawing is pure: it reads the world, never mutates it.
 import { DRONE, FIELD, MUTATIONS, PALETTE } from './config.js';
+import { META_TRACKS, metaLevel, metaPrice, shopLayout, titleShopButton } from './meta.js';
 import { backgroundImage, drawIcon, drawSprite } from './sprites.js';
 import { WEAPON_NAMES } from './upgrades.js';
 import { clamp } from './random.js';
@@ -11,6 +12,7 @@ export const SCREEN_PLAY = 'play';
 export const SCREEN_DRAFT = 'draft';
 export const SCREEN_OVER = 'over';
 export const SCREEN_PAUSED = 'paused';
+export const SCREEN_SHOP = 'shop';
 
 function roundRect(ctx, x, y, width, height, radius) {
   ctx.beginPath();
@@ -908,7 +910,7 @@ function drawBanner(ctx, world) {
   ctx.restore();
 }
 
-function drawTitle(ctx, world) {
+function drawTitle(ctx, world, ui = {}) {
   ctx.save();
   ctx.fillStyle = 'rgba(7, 10, 20, 0.72)';
   ctx.fillRect(0, 0, FIELD.width, FIELD.height);
@@ -930,11 +932,111 @@ function drawTitle(ctx, world) {
   ctx.font = 'bold 20px system-ui, sans-serif';
   ctx.fillStyle = world.best > 0 ? '#ffd166' : PALETTE.dim;
   ctx.fillText(world.best > 0 ? `BEST SCORE  ${world.best}` : 'No light has fallen yet — be the first.', FIELD.width / 2, 336);
+  // The meta wallet (v7): the Lumen balance rides on the title, so the
+  // player always knows what a run is worth before starting one.
+  const balance = ui.meta?.balance ?? 0;
+  ctx.font = 'bold 18px system-ui, sans-serif';
+  ctx.fillStyle = '#ffd166';
+  ctx.fillText(`◆  LUMEN  ${balance}`, FIELD.width / 2, 368);
   const pulse = 0.6 + 0.4 * Math.sin(world.time * 3);
   ctx.globalAlpha = pulse;
   ctx.font = 'bold 24px system-ui, sans-serif';
   ctx.fillStyle = PALETTE.player;
   ctx.fillText('CLICK OR PRESS ENTER TO BEGIN', FIELD.width / 2, 408);
+  ctx.globalAlpha = 1;
+  // The shop button: the same rect main.js hit-tests, so the drawn button
+  // and the clickable button can never drift apart.
+  const button = titleShopButton();
+  ctx.fillStyle = '#141b31';
+  ctx.strokeStyle = PALETTE.lantern;
+  ctx.lineWidth = 2;
+  roundRect(ctx, button.x, button.y, button.width, button.height, 10);
+  ctx.fill();
+  ctx.stroke();
+  ctx.font = 'bold 17px system-ui, sans-serif';
+  ctx.fillStyle = '#ffe9a8';
+  ctx.fillText('◆  SHOP  —  PRESS S', button.x + button.width / 2, button.y + button.height / 2 + 1);
+  ctx.restore();
+}
+
+/** The between-runs shop (v7): five permanent tracks, bought with Lumen.
+ * A row shows the name, what a level does, the levels already owned as
+ * pips, and the price of the next level — gold when affordable, dim when
+ * not, MAXED when the track is done. */
+function drawShop(ctx, meta, hover) {
+  const balance = meta?.balance ?? 0;
+  const owned = meta?.owned ?? {};
+  ctx.save();
+  ctx.fillStyle = 'rgba(7, 10, 20, 0.82)';
+  ctx.fillRect(0, 0, FIELD.width, FIELD.height);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = 'bold 34px system-ui, sans-serif';
+  ctx.fillStyle = PALETTE.text;
+  ctx.fillText('THE LANTERN SHOP', FIELD.width / 2, 80);
+  ctx.font = '15px system-ui, sans-serif';
+  ctx.fillStyle = PALETTE.dim;
+  ctx.fillText('Spend Lumen earned in the dark on permanent starting boons — small, and forever.', FIELD.width / 2, 110);
+  ctx.font = 'bold 18px system-ui, sans-serif';
+  ctx.fillStyle = '#ffd166';
+  ctx.fillText(`◆  LUMEN  ${balance}`, FIELD.width / 2, 136);
+  const layout = shopLayout();
+  layout.rows.forEach((row, index) => {
+    const track = META_TRACKS[index];
+    const level = metaLevel(owned, track.id);
+    const price = metaPrice(track, level);
+    const active = hover === track.id;
+    const affordable = price !== null && balance >= price;
+    ctx.fillStyle = active ? '#1b2440' : '#11172c';
+    ctx.strokeStyle = active ? PALETTE.lantern : '#2a3352';
+    ctx.lineWidth = active ? 3 : 2;
+    roundRect(ctx, row.x, row.y, row.width, row.height, 12);
+    ctx.fill();
+    ctx.stroke();
+    ctx.textAlign = 'left';
+    ctx.fillStyle = PALETTE.text;
+    ctx.font = 'bold 19px system-ui, sans-serif';
+    ctx.fillText(track.name, row.x + 24, row.y + 22);
+    ctx.fillStyle = PALETTE.dim;
+    ctx.font = '15px system-ui, sans-serif';
+    ctx.fillText(`${track.desc}  ·  level ${level}/${track.max}`, row.x + 24, row.y + 46);
+    // Owned levels as pips, then the price of the next one.
+    for (let pip = 0; pip < track.max; pip += 1) {
+      const cx = row.x + 470 + pip * 24;
+      const cy = row.y + row.height / 2;
+      ctx.beginPath();
+      ctx.arc(cx, cy, 7, 0, Math.PI * 2);
+      if (pip < level) {
+        ctx.fillStyle = '#ffd166';
+        ctx.fill();
+      } else {
+        ctx.strokeStyle = '#3a4568';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+    }
+    ctx.textAlign = 'right';
+    ctx.font = 'bold 18px system-ui, sans-serif';
+    if (price === null) {
+      ctx.fillStyle = PALETTE.dim;
+      ctx.fillText('MAXED', row.x + row.width - 24, row.y + row.height / 2);
+    } else {
+      ctx.fillStyle = affordable ? '#ffd166' : '#7a5a6e';
+      ctx.fillText(`◆ ${price}`, row.x + row.width - 24, row.y + row.height / 2);
+    }
+  });
+  const back = layout.back;
+  const backActive = hover === 'back';
+  ctx.fillStyle = backActive ? '#1b2440' : '#11172c';
+  ctx.strokeStyle = backActive ? PALETTE.lantern : '#2a3352';
+  ctx.lineWidth = backActive ? 3 : 2;
+  roundRect(ctx, back.x, back.y, back.width, back.height, 10);
+  ctx.fill();
+  ctx.stroke();
+  ctx.textAlign = 'center';
+  ctx.font = 'bold 16px system-ui, sans-serif';
+  ctx.fillStyle = PALETTE.text;
+  ctx.fillText('BACK  —  ESC', back.x + back.width / 2, back.y + back.height / 2 + 1);
   ctx.restore();
 }
 
@@ -1001,7 +1103,7 @@ function drawDraft(ctx, world, draft, hover) {
   ctx.restore();
 }
 
-function drawOver(ctx, world, isNewBest) {
+function drawOver(ctx, world, isNewBest, earned = 0) {
   ctx.save();
   ctx.fillStyle = 'rgba(7, 10, 20, 0.78)';
   ctx.fillRect(0, 0, FIELD.width, FIELD.height);
@@ -1028,6 +1130,12 @@ function drawOver(ctx, world, isNewBest) {
   const accuracy = world.stats.shots > 0 ? Math.round((world.stats.hits / world.stats.shots) * 100) : 0;
   ctx.fillText(`Wave ${world.wave}  ·  ${world.kills} Hollow slain  ·  ${minutes}:${String(seconds).padStart(2, '0')} survived  ·  ${accuracy}% accuracy`, FIELD.width / 2, 292);
   ctx.fillText(`Best score  ${world.best}`, FIELD.width / 2, 322);
+  // The run's pay (v7): what the fallen Warden's light was worth.
+  if (earned > 0) {
+    ctx.font = 'bold 18px system-ui, sans-serif';
+    ctx.fillStyle = '#ffd166';
+    ctx.fillText(`+${earned}  ◆  LUMEN EARNED`, FIELD.width / 2, 352);
+  }
   const pulse = 0.6 + 0.4 * Math.sin(world.time * 3);
   ctx.globalAlpha = pulse;
   ctx.font = 'bold 22px system-ui, sans-serif';
@@ -1120,8 +1228,9 @@ export function drawGame(ctx, world, screen, ui = {}) {
     ctx.lineWidth = 5;
     ctx.strokeRect(2.5, 2.5, FIELD.width - 5, FIELD.height - 5);
   }
-  if (screen === SCREEN_TITLE) drawTitle(ctx, world);
+  if (screen === SCREEN_TITLE) drawTitle(ctx, world, ui);
   if (screen === SCREEN_DRAFT) drawDraft(ctx, world, ui.draft ?? [], ui.hover ?? -1);
-  if (screen === SCREEN_OVER) drawOver(ctx, world, ui.isNewBest ?? false);
+  if (screen === SCREEN_OVER) drawOver(ctx, world, ui.isNewBest ?? false, ui.earned ?? 0);
   if (screen === SCREEN_PAUSED) drawPaused(ctx);
+  if (screen === SCREEN_SHOP) drawShop(ctx, ui.meta, ui.shopHover ?? null);
 }

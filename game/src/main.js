@@ -5,7 +5,8 @@
 import { AudioEngine } from './audio.js';
 import { FIELD, STEP } from './config.js';
 import { Input } from './input.js';
-import { drawGame, SCREEN_DRAFT, SCREEN_OVER, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
+import { drawGame, SCREEN_DRAFT, SCREEN_OVER, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_SHOP, SCREEN_TITLE } from './render.js';
+import { applyMetaBonuses, buyMetaUpgrade, earnLumen, loadMeta, saveMeta, shopHit, titleHit } from './meta.js';
 import { makeAutopilot, stageShot } from './shots.js';
 import { loadBackgrounds, loadSprites } from './sprites.js';
 import { applyDraftPick, beginRun, createWorld, EVENT_OVER, EVENT_WAVE_CLEAR, startWave, stepWorld, timeScale } from './world.js';
@@ -31,17 +32,30 @@ try {
   best = 0;
 }
 
+// The meta wallet (v7): localStorage may be missing or hostile in private
+// mode, so access goes through a guarded handle and loadMeta falls back to
+// an empty wallet instead of throwing.
+let storage = null;
+try {
+  storage = window.localStorage;
+} catch {
+  storage = null;
+}
+let meta = loadMeta(storage);
+let lastEarned = 0;
+
 const world = createWorld(seed, best);
 const view = { scale: 1, offsetX: 0, offsetY: 0 };
 let screen = SCREEN_TITLE;
 let draft = null;
 let hover = -1;
+let shopHover = null;
 let isNewBest = false;
 
 // A read-only handle for play-testing (and for the live browser's checks):
 // the world, the current screen and the draft cards, nothing that plays the
 // game by itself.
-window.__lumenfall = { world, screen: () => screen, draft: () => draft };
+window.__lumenfall = { world, screen: () => screen, draft: () => draft, meta: () => meta };
 
 function saveBest() {
   try {
@@ -99,14 +113,18 @@ function drawFrame(drawWorld) {
   ctx.fillStyle = '#070a14';
   ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
   ctx.setTransform(deviceRatio * view.scale, 0, 0, deviceRatio * view.scale, deviceRatio * view.offsetX, deviceRatio * view.offsetY);
-  drawGame(ctx, drawWorld, screen, { draft, hover, isNewBest });
+  drawGame(ctx, drawWorld, screen, { draft, hover, isNewBest, meta, earned: lastEarned, shopHover });
 }
 
 function startGame() {
   audio.ensure();
   beginRun(world);
+  // The wallet's permanent boons apply to the fresh Warden (v7): beginRun
+  // rebuilds the player from config, so the bonuses go on after it.
+  applyMetaBonuses(world.player, meta.owned);
   screen = SCREEN_PLAY;
   isNewBest = false;
+  lastEarned = 0;
   audio.waveHorn();
   status.textContent = 'Wave 1. Hold the light.';
 }
@@ -126,7 +144,12 @@ function gameOver() {
   isNewBest = world.score >= world.best && world.score > 0;
   world.best = Math.max(world.best, world.score);
   saveBest();
-  status.textContent = `Game over. Score ${world.score}, wave ${world.wave}.`;
+  // The run pays out (v7): Lumen for the waves survived and the Hollow
+  // slain, banked into the wallet at once.
+  lastEarned = earnLumen(world, meta.owned);
+  meta = { balance: meta.balance + lastEarned, owned: { ...meta.owned } };
+  saveMeta(storage, meta);
+  status.textContent = `Game over. Score ${world.score}, wave ${world.wave}. +${lastEarned} Lumen earned.`;
 }
 
 // Sprites and background plates load before the first frame in either
@@ -140,6 +163,10 @@ if (shotName) {
   screen = staged.screen;
   draft = staged.draft;
   world.best = staged.best;
+  if (staged.meta) meta = staged.meta;
+  // A game-over frame shows what the run paid, without banking anything:
+  // shot mode never writes to storage.
+  if (screen === SCREEN_OVER) lastEarned = earnLumen(world, meta.owned);
   drawFrame(world);
   window.__shotReady = true;
 } else {
@@ -173,8 +200,37 @@ if (shotName) {
           beginRun(demoWorld);
         }
       }
-      if (input.wasPressed('Enter') || input.wasPressed('NumpadEnter') || input.wasClicked()) {
+      if (input.wasPressed('Enter') || input.wasPressed('NumpadEnter')) {
         startGame();
+      } else if (input.wasPressed('KeyS')) {
+        screen = SCREEN_SHOP;
+      } else if (input.wasClicked()) {
+        // A click on the shop button opens the shop; anywhere else starts.
+        if (titleHit(logicalMouse()) === 'shop') {
+          screen = SCREEN_SHOP;
+        } else {
+          startGame();
+        }
+      }
+      drawFrame(demoWorld);
+    } else if (screen === SCREEN_SHOP) {
+      // The demo world freezes behind the shop; its catch-up sim time is
+      // discarded so returning to the title does not burst-step it.
+      accumulator = 0;
+      const hit = shopHit(logicalMouse());
+      shopHover = hit === null ? null : (hit.action === 'back' ? 'back' : hit.id);
+      if (input.wasPressed('Escape') || input.wasPressed('KeyS')) {
+        screen = SCREEN_TITLE;
+      } else if (input.wasClicked()) {
+        if (hit?.action === 'back') {
+          screen = SCREEN_TITLE;
+        } else if (hit?.action === 'buy') {
+          const result = buyMetaUpgrade(meta, hit.id);
+          if (result.ok) {
+            meta = result.state;
+            saveMeta(storage, meta);
+          }
+        }
       }
       drawFrame(demoWorld);
     } else if (screen === SCREEN_PLAY) {
@@ -216,6 +272,9 @@ if (shotName) {
     } else if (screen === SCREEN_OVER) {
       if (input.wasPressed('KeyR') || input.wasPressed('Enter') || input.wasClicked()) {
         startGame();
+      } else if (input.wasPressed('Escape')) {
+        // Back to the title — and the shop — to spend the run's Lumen.
+        screen = SCREEN_TITLE;
       }
       drawFrame(world);
     }

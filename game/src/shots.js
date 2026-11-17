@@ -4,7 +4,7 @@
 // the same seed always gives the same frame.
 import { FIELD, STEP } from './config.js';
 import { EVENT_OVER, EVENT_WAVE_CLEAR, applyDraftPick, beginRun, resetWorld, startWave, stepWorld } from './world.js';
-import { SCREEN_DRAFT, SCREEN_OVER, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
+import { SCREEN_DRAFT, SCREEN_OVER, SCREEN_PLAY, SCREEN_SHOP, SCREEN_TITLE } from './render.js';
 import { rollDraft, UPGRADES } from './upgrades.js';
 
 const START_SECONDS = 8;
@@ -245,6 +245,31 @@ export function stageShot(name, world, view) {
       });
     }
     return { screen: SCREEN_PLAY, draft: null, best: world.best };
+  }
+  if (name === 'shop') {
+    // The v7 shop frame: a staged wallet — 128 Lumen, a Heart and two
+    // Ember Rounds already owned, one Greed — so the frame shows owned
+    // pips, a MAXED-able track, affordable prices and one unaffordable row.
+    return {
+      screen: SCREEN_SHOP,
+      draft: null,
+      best: world.best,
+      meta: {
+        balance: 128,
+        owned: { 'warden-heart': 1, 'ember-rounds': 2, 'lumen-greed': 1 },
+      },
+    };
+  }
+  if (name === 'title-meta') {
+    // The v7 title frame: the demo run behind it, the Lumen balance and
+    // the shop button on top.
+    simulate(world, view, START_SECONDS, 'skilled');
+    return {
+      screen: SCREEN_TITLE,
+      draft: null,
+      best: world.best,
+      meta: { balance: 87, owned: { 'warden-heart': 1 } },
+    };
   }
   if (name !== 'play' && name !== 'draft' && name !== 'over') {
     simulate(world, view, START_SECONDS, 'skilled');
